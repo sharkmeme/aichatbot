@@ -3,15 +3,38 @@ import { createRoot } from 'react-dom/client';
 import { Widget } from './components/Widget';
 
 /**
+ * Helper function to reliably find the widget script tag
+ * Works even when document.currentScript is null (e.g., in Webflow)
+ */
+function findScriptTag(): HTMLScriptElement | null {
+  const current = document.currentScript as HTMLScriptElement | null;
+  if (current) return current;
+
+  const scripts = Array.from(document.getElementsByTagName('script')) as HTMLScriptElement[];
+
+  // Prefer the script with our backend attribute
+  const withBackend = scripts.find(
+    s => s.getAttribute('data-backend-url') && s.src.includes('embed.js')
+  );
+  if (withBackend) return withBackend;
+
+  // Fallback: any script whose src includes "aichatbot-omega-snowy.vercel.app/embed.js"
+  const bySrc = scripts.find(s =>
+    s.src.includes('aichatbot-omega-snowy.vercel.app/embed.js')
+  );
+  return bySrc || null;
+}
+
+/**
  * Initialize the Bunny Honey chat widget
  * Reads configuration from script tag data attributes
  */
 (function () {
   // Find the script tag that loaded this file
-  const scriptTag = document.currentScript as HTMLScriptElement | null;
+  const scriptTag = findScriptTag();
 
   if (!scriptTag) {
-    console.error('Bunny Honey Widget: Could not find script tag');
+    console.error('Bunny Honey Widget: Could not find script tag in DOM');
     return;
   }
 
