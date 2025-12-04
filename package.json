@@ -1,0 +1,25 @@
+{
+  "name": "bunny-honey-chatbot",
+  "version": "1.0.0",
+  "description": "AI chatbot system for Bunny Honey agency",
+  "private": true,
+  "scripts": {
+    "install:backend": "cd backend && npm install",
+    "install:frontend": "cd frontend-widget && npm install",
+    "install:all": "npm run install:backend && npm run install:frontend",
+    "dev:backend": "cd backend && npm run dev",
+    "dev:frontend": "cd frontend-widget && npm run dev",
+    "build:backend": "cd backend && npm run build",
+    "build:frontend": "cd frontend-widget && npm run build",
+    "start:backend": "cd backend && npm start"
+  },
+  "keywords": [
+    "chatbot",
+    "ai",
+    "openai",
+    "react",
+    "typescript"
+  ],
+  "author": "Bunny Honey",
+  "license": "MIT"
+}

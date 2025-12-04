@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bunny Honey Widget - Development</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+          'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+          sans-serif;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+      }
+      .dev-info {
+        background: white;
+        border-radius: 12px;
+        padding: 40px;
+        max-width: 600px;
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+      }
+      .dev-info h1 {
+        margin: 0 0 12px 0;
+        color: #1f2937;
+      }
+      .dev-info p {
+        color: #6b7280;
+        margin: 0 0 24px 0;
+        line-height: 1.6;
+      }
+      .dev-info code {
+        background: #f3f4f6;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-family: 'Courier New', monospace;
+        font-size: 13px;
+      }
+      .dev-info .note {
+        background: #fef3c7;
+        border-left: 4px solid #f59e0b;
+        padding: 12px;
+        margin: 20px 0;
+        border-radius: 4px;
+      }
+      .dev-info .note strong {
+        color: #92400e;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="dev-info">
+      <h1>🐰 Bunny Honey Widget</h1>
+      <p>Development Mode</p>
+      <div class="note">
+        <strong>Note:</strong> The widget loads in the bottom-right corner.
+        Make sure your backend is running on <code>http://localhost:8080</code>
+      </div>
+      <p>
+        This is a development preview of the Bunny Honey AI chatbot widget.
+        The widget appears as a floating chat button in the bottom-right corner.
+      </p>
+      <p>
+        <strong>Backend URL:</strong> <code>http://localhost:8080</code><br>
+        <strong>Environment:</strong> Development
+      </p>
+    </div>
+
+    <script type="module" src="/src/embed.ts"></script>
+    <script>
+      // Simulate the script tag attributes for development
+      document.currentScript.setAttribute('data-backend-url', 'http://localhost:8080');
+      document.currentScript.setAttribute('data-calendly-url', 'https://calendly.com/your-link');
+    </script>
+  </body>
+</html>
