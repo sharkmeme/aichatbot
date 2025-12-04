@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { ChatLauncher } from './ChatLauncher';
 import { ChatWindow } from './ChatWindow';
-import '../styles/widget.css';
 
 interface WidgetProps {
   backendUrl: string;

@@ -1,6 +1,16 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { Widget } from './components/Widget';
+import widgetCss from './styles/widget.css?inline';
+
+/**
+ * Inject CSS into the document head
+ */
+function injectCss(css: string) {
+  const style = document.createElement("style");
+  style.textContent = css;
+  document.head.appendChild(style);
+}
 
 /**
  * Helper function to reliably find the widget script tag
@@ -60,6 +70,9 @@ function findScriptTag(): HTMLScriptElement | null {
 
   // Wait for DOM to be ready
   function initWidget() {
+    // Inject CSS into document head
+    injectCss(widgetCss);
+
     // Create container div
     const container = document.createElement('div');
     container.id = 'bh-widget-container';
