@@ -3,6 +3,11 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
+  define: {
+    // Prevent "process is not defined" in browser
+    'process.env': {},
+    'process.env.NODE_ENV': '"production"',
+  },
   build: {
     lib: {
       entry: 'src/embed.ts',

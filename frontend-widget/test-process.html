@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Process.env Fix Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .test-box {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .pass {
+            color: #155724;
+            background: #d4edda;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        .fail {
+            color: #721c24;
+            background: #f8d7da;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        code {
+            background: #f4f4f4;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <h1>🧪 Process.env Fix Test</h1>
+
+    <div class="test-box">
+        <h2>Test Objective</h2>
+        <p>Verify that the widget loads without <code>process is not defined</code> error.</p>
+    </div>
+
+    <div class="test-box">
+        <h2>Expected Results</h2>
+        <ul>
+            <li>✅ No console errors</li>
+            <li>✅ <code>window.__BUNNY_WIDGET_LOADED === true</code></li>
+            <li>✅ Widget container exists in DOM</li>
+            <li>✅ Chat button visible (bottom-right)</li>
+        </ul>
+    </div>
+
+    <div class="test-box">
+        <h2>Test Results</h2>
+        <div id="test-results">
+            <p>Loading widget... Check console for any errors.</p>
+        </div>
+    </div>
+
+    <!-- Widget embed script -->
+    <script src="./dist/embed.js" data-backend-url="http://localhost:8080" data-calendly-url="https://calendly.com/test"></script>
+
+    <!-- Test script -->
+    <script>
+        // Run tests after a short delay to allow widget to initialize
+        setTimeout(function() {
+            const resultsDiv = document.getElementById('test-results');
+            resultsDiv.innerHTML = '';
+
+            const tests = [
+                {
+                    name: 'Widget loaded flag',
+                    test: () => window.__BUNNY_WIDGET_LOADED === true,
+                    expected: 'window.__BUNNY_WIDGET_LOADED should be true'
+                },
+                {
+                    name: 'Container exists',
+                    test: () => document.getElementById('bh-widget-container') !== null,
+                    expected: '#bh-widget-container should exist in DOM'
+                },
+                {
+                    name: 'Launcher button exists',
+                    test: () => document.querySelector('.bh-launcher') !== null,
+                    expected: '.bh-launcher button should be rendered'
+                },
+                {
+                    name: 'Widget container exists',
+                    test: () => document.querySelector('.bh-widget-container') !== null,
+                    expected: '.bh-widget-container should be rendered'
+                }
+            ];
+
+            let allPassed = true;
+
+            tests.forEach(function(testCase) {
+                const passed = testCase.test();
+                allPassed = allPassed && passed;
+
+                const div = document.createElement('div');
+                div.className = passed ? 'pass' : 'fail';
+                div.innerHTML = (passed ? '✅ PASS' : '❌ FAIL') + ' - ' + testCase.name;
+                if (!passed) {
+                    div.innerHTML += '<br><small>' + testCase.expected + '</small>';
+                }
+                resultsDiv.appendChild(div);
+            });
+
+            // Overall result
+            const summary = document.createElement('div');
+            summary.className = allPassed ? 'pass' : 'fail';
+            summary.style.fontWeight = 'bold';
+            summary.style.fontSize = '18px';
+            summary.style.marginTop = '20px';
+            summary.textContent = allPassed
+                ? '🎉 ALL TESTS PASSED! No process.env errors!'
+                : '⚠️ SOME TESTS FAILED - Check browser console';
+            resultsDiv.appendChild(summary);
+
+            // Log to console
+            console.log('========================================');
+            console.log('BUNNY HONEY WIDGET TEST RESULTS');
+            console.log('========================================');
+            console.log('window.__BUNNY_WIDGET_LOADED:', window.__BUNNY_WIDGET_LOADED);
+            console.log('Container:', document.getElementById('bh-widget-container'));
+            console.log('Launcher:', document.querySelector('.bh-launcher'));
+            console.log('All tests passed:', allPassed);
+            console.log('========================================');
+        }, 1500);
+
+        // Catch any errors
+        window.addEventListener('error', function(e) {
+            console.error('ERROR DETECTED:', e.message);
+            if (e.message.includes('process')) {
+                console.error('❌ PROCESS ERROR STILL EXISTS!');
+            }
+        });
+    </script>
+</body>
+</html>
