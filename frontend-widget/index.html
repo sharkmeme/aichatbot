@@ -72,11 +72,6 @@
       </p>
     </div>
 
-    <script type="module" src="/src/embed.ts"></script>
-    <script>
-      // Simulate the script tag attributes for development
-      document.currentScript.setAttribute('data-backend-url', 'http://localhost:8080');
-      document.currentScript.setAttribute('data-calendly-url', 'https://calendly.com/your-link');
-    </script>
+    <script type="module" src="/src/embed.ts" data-backend-url="http://localhost:8080" data-calendly-url="https://calendly.com/your-link"></script>
   </body>
 </html>

@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Widget Auto-Mount Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+        }
+        .test-section {
+            background: #f5f5f5;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .test-result {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+        }
+        .pass {
+            background: #d4edda;
+            color: #155724;
+        }
+        .fail {
+            background: #f8d7da;
+            color: #721c24;
+        }
+    </style>
+</head>
+<body>
+    <h1>🧪 Bunny Honey Widget Auto-Mount Test</h1>
+
+    <div class="test-section">
+        <h2>Test Page Content</h2>
+        <p>This page tests if the widget auto-mounts when the embed script loads.</p>
+        <p>Check the bottom-right corner for the chat button.</p>
+    </div>
+
+    <div class="test-section">
+        <h2>Expected Behavior</h2>
+        <ul>
+            <li>✅ Chat button appears in bottom-right corner</li>
+            <li>✅ window.__BUNNY_WIDGET_LOADED is true</li>
+            <li>✅ Container #bh-widget-container exists</li>
+            <li>✅ Clicking button opens chat window</li>
+        </ul>
+    </div>
+
+    <div class="test-section">
+        <h2>Automated Tests</h2>
+        <div id="test-results"></div>
+    </div>
+
+    <!-- Widget embed script -->
+    <script src="./dist/embed.js" data-backend-url="http://localhost:8080" data-calendly-url="https://calendly.com/test"></script>
+
+    <!-- Test script -->
+    <script>
+        window.addEventListener('load', function() {
+            setTimeout(function() {
+                const results = [];
+
+                // Test 1: Widget loaded flag
+                if (window.__BUNNY_WIDGET_LOADED === true) {
+                    results.push({ name: 'window.__BUNNY_WIDGET_LOADED', status: 'pass' });
+                } else {
+                    results.push({ name: 'window.__BUNNY_WIDGET_LOADED', status: 'fail' });
+                }
+
+                // Test 2: Container exists
+                const container = document.getElementById('bh-widget-container');
+                if (container) {
+                    results.push({ name: 'Container #bh-widget-container exists', status: 'pass' });
+                } else {
+                    results.push({ name: 'Container #bh-widget-container exists', status: 'fail' });
+                }
+
+                // Test 3: Launcher button exists
+                const launcher = document.querySelector('.bh-launcher');
+                if (launcher) {
+                    results.push({ name: 'Launcher button rendered', status: 'pass' });
+                } else {
+                    results.push({ name: 'Launcher button rendered', status: 'fail' });
+                }
+
+                // Test 4: CSS loaded
+                const widgetContainer = document.querySelector('.bh-widget-container');
+                if (widgetContainer) {
+                    results.push({ name: 'Widget container rendered', status: 'pass' });
+                } else {
+                    results.push({ name: 'Widget container rendered', status: 'fail' });
+                }
+
+                // Display results
+                const resultsDiv = document.getElementById('test-results');
+                results.forEach(function(result) {
+                    const div = document.createElement('div');
+                    div.className = 'test-result ' + result.status;
+                    div.textContent = (result.status === 'pass' ? '✅ PASS' : '❌ FAIL') + ' - ' + result.name;
+                    resultsDiv.appendChild(div);
+                });
+
+                // Overall result
+                const allPass = results.every(r => r.status === 'pass');
+                const summary = document.createElement('div');
+                summary.className = 'test-result ' + (allPass ? 'pass' : 'fail');
+                summary.textContent = allPass ? '🎉 ALL TESTS PASSED!' : '⚠️ SOME TESTS FAILED';
+                summary.style.fontWeight = 'bold';
+                summary.style.fontSize = '18px';
+                resultsDiv.appendChild(summary);
+
+                console.log('Test Results:', results);
+            }, 1000);
+        });
+    </script>
+</body>
+</html>

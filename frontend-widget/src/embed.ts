@@ -1,7 +1,6 @@
 import React from 'react';
-import ReactDOM from 'react-dom/client';
+import { createRoot } from 'react-dom/client';
 import { Widget } from './components/Widget';
-import { WidgetConfig } from './types';
 
 /**
  * Initialize the Bunny Honey chat widget
@@ -25,9 +24,9 @@ import { WidgetConfig } from './types';
     return;
   }
 
-  // Create configuration object
-  const config: WidgetConfig = {
-    backendUrl,
+  // Store validated config
+  const config = {
+    backendUrl: backendUrl as string,
     calendlyUrl: calendlyUrl || undefined,
   };
 
@@ -35,12 +34,20 @@ import { WidgetConfig } from './types';
   function initWidget() {
     // Create container div
     const container = document.createElement('div');
-    container.id = 'bunny-honey-widget-root';
+    container.id = 'bh-widget-container';
     document.body.appendChild(container);
 
     // Mount React app
-    const root = ReactDOM.createRoot(container);
-    root.render(React.createElement(Widget, { config }));
+    const root = createRoot(container);
+    root.render(
+      React.createElement(Widget, {
+        backendUrl: config.backendUrl,
+        calendlyUrl: config.calendlyUrl
+      })
+    );
+
+    // Set global flag
+    (window as any).__BUNNY_WIDGET_LOADED = true;
 
     console.log('✅ Bunny Honey Widget initialized');
   }
