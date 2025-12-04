@@ -4,25 +4,30 @@ import { Widget } from './components/Widget';
 
 /**
  * Helper function to reliably find the widget script tag
- * Works even when document.currentScript is null (e.g., in Webflow)
+ * Works even when Webflow rewrites or proxies script URLs
  */
 function findScriptTag(): HTMLScriptElement | null {
   const current = document.currentScript as HTMLScriptElement | null;
   if (current) return current;
 
-  const scripts = Array.from(document.getElementsByTagName('script')) as HTMLScriptElement[];
+  const scripts = Array.from(document.getElementsByTagName("script")) as HTMLScriptElement[];
 
-  // Prefer the script with our backend attribute
-  const withBackend = scripts.find(
-    s => s.getAttribute('data-backend-url') && s.src.includes('embed.js')
-  );
-  if (withBackend) return withBackend;
+  // 1. Prefer scripts that explicitly have data-backend-url attribute
+  const attrMatch = scripts.find(s => s.getAttribute("data-backend-url"));
+  if (attrMatch) return attrMatch;
 
-  // Fallback: any script whose src includes "aichatbot-omega-snowy.vercel.app/embed.js"
-  const bySrc = scripts.find(s =>
-    s.src.includes('aichatbot-omega-snowy.vercel.app/embed.js')
-  );
-  return bySrc || null;
+  // 2. Fallback: scripts whose *filename* (not full URL) includes embed.js
+  const fileMatch = scripts.find(s => {
+    try {
+      const url = new URL(s.src);
+      return url.pathname.endsWith("/embed.js") || url.pathname.includes("embed");
+    } catch {
+      return s.src.includes("embed.js");
+    }
+  });
+  if (fileMatch) return fileMatch;
+
+  return null;
 }
 
 /**
