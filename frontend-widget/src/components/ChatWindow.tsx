@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Message } from '../types';
 import { ChatAPI } from '../utils/api';
 import { getOrCreateSessionId } from '../utils/sessionManager';
+import { MessageContent } from './MessageContent';
+import { loadConversation, saveConversation } from '../utils/conversationStorage';
 
 interface ChatWindowProps {
   isOpen: boolean;
@@ -17,9 +19,13 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ isOpen, onClose, backend
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatAPI = useRef(new ChatAPI(backendUrl));
 
-  // Initial greeting
+  // Load conversation from localStorage on mount
   useEffect(() => {
-    if (isOpen && messages.length === 0) {
+    const savedConversation = loadConversation();
+    if (savedConversation && savedConversation.length > 0) {
+      setMessages(savedConversation);
+    } else if (messages.length === 0) {
+      // Initial greeting for new conversations
       setMessages([
         {
           id: 'welcome',
@@ -29,7 +35,15 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ isOpen, onClose, backend
         },
       ]);
     }
-  }, [isOpen, messages.length]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Save conversation to localStorage whenever messages change
+  useEffect(() => {
+    if (messages.length > 0) {
+      saveConversation(messages);
+    }
+  }, [messages]);
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -102,19 +116,39 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ isOpen, onClose, backend
             <p>AI Assistant</p>
           </div>
         </div>
-        <button className="bh-close-btn" onClick={onClose} aria-label="Close chat">
-          <svg
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
+        <div className="bh-header-actions">
+          <a
+            href="https://bunny-honey-9a9aed.webflow.io/contact-us"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="bh-contact-btn"
+            aria-label="Contact Us"
           >
-            <line x1="18" y1="6" x2="6" y2="18" />
-            <line x1="6" y1="6" x2="18" y2="18" />
-          </svg>
-        </button>
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+            </svg>
+          </a>
+          <button className="bh-close-btn" onClick={onClose} aria-label="Close chat">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
       </div>
 
       {/* Messages */}
@@ -122,7 +156,9 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ isOpen, onClose, backend
         {messages.map((msg) => (
           <div key={msg.id} className={`bh-message bh-${msg.sender}`}>
             <div className="bh-message-avatar">{msg.sender === 'user' ? '👤' : '🐰'}</div>
-            <div className="bh-message-content">{msg.content}</div>
+            <div className="bh-message-content">
+              <MessageContent content={msg.content} sender={msg.sender} />
+            </div>
           </div>
         ))}
         {isLoading && (

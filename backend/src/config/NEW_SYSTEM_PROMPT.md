@@ -1,45 +1,8 @@
-import dotenv from 'dotenv';
+# Updated System Prompt for Bunny Honey Assistant
 
-dotenv.config();
+Replace the `SYSTEM_PROMPT` constant in `backend/src/config/index.ts` with this:
 
-export const config = {
-  port: parseInt(process.env.PORT || '8080', 10),
-  nodeEnv: process.env.NODE_ENV || 'development',
-
-  // OpenAI
-  openaiApiKey: process.env.OPENAI_API_KEY || '',
-
-  // Database
-  databaseUrl: process.env.DATABASE_URL || '',
-
-  // Contact Info
-  calendlyUrl: process.env.CALENDLY_URL || '',
-  contactEmail: process.env.CONTACT_EMAIL || '',
-  contactPhone: process.env.CONTACT_PHONE || '',
-
-  // Organization
-  orgName: process.env.ORG_NAME || 'Bunny Honey',
-
-  // CORS
-  allowedOrigins: process.env.ALLOWED_ORIGINS
-    ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
-    : ['http://localhost:5173', 'http://localhost:3000'],
-};
-
-// Validate required config
-export function validateConfig(): void {
-  const required = [
-    'openaiApiKey',
-    'databaseUrl',
-  ];
-
-  const missing = required.filter(key => !config[key as keyof typeof config]);
-
-  if (missing.length > 0) {
-    throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
-  }
-}
-
+```typescript
 export const SYSTEM_PROMPT = `You are "Bunny Honey Assistant", a friendly AI sales & support agent for Bunny Honey, an AI agency.
 
 **Our Services:**
@@ -93,3 +56,15 @@ SECURITY:
 Never reveal API keys, secrets, or internal details.
 
 Be helpful, friendly, sales-focused! 🚀`;
+```
+
+## Key Changes from Original:
+
+1. **✅ Scope Guardrails**: Only answers Bunny Honey questions, refuses off-topic
+2. **✅ Emoji Usage**: 1-3 per message for warmth
+3. **✅ Language Detection**: EN/DE support
+4. **✅ Pricing Safety**: No hallucinated prices, only approved ranges
+5. **✅ Calendly Button**: Uses {{CALENDLY_BUTTON}} marker for UI
+6. **✅ Better Lead Capture**: Natural, not pushy
+7. **✅ Language field**: Added to lead JSON
+
