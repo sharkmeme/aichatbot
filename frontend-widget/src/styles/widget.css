@@ -311,6 +311,17 @@
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
 }
 
+.bh-cta-call {
+  background: #10b981;
+  color: white;
+}
+
+.bh-cta-call:hover {
+  background: #059669;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(16, 185, 129, 0.3);
+}
+
 /* Loading indicator */
 .bh-loading {
   display: flex;

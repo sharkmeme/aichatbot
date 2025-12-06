@@ -1,12 +1,10 @@
 import React from 'react';
+import { CONTACT_LINKS } from '../config/contactLinks';
 
 interface MessageContentProps {
   content: string;
   sender: 'user' | 'bot';
 }
-
-// Default Calendly URL (fallback)
-const DEFAULT_CALENDLY_URL = 'https://calendly.com/bunnyhoneyclub';
 
 export const MessageContent: React.FC<MessageContentProps> = ({ content, sender }) => {
   // Only process special markers for bot messages
@@ -27,10 +25,10 @@ export const MessageContent: React.FC<MessageContentProps> = ({ content, sender 
         <button
           key={`btn-meeting-${i}`}
           className="bh-cta-btn bh-cta-primary"
-          onClick={() => window.open(DEFAULT_CALENDLY_URL, '_blank', 'noopener,noreferrer')}
-          aria-label="Book a meeting"
+          onClick={() => window.open(CONTACT_LINKS.meeting, '_blank', 'noopener,noreferrer')}
+          aria-label="Book a Meeting"
         >
-          📅 Book a meeting
+          📅 Book a Meeting
         </button>
       );
       continue;
@@ -41,10 +39,10 @@ export const MessageContent: React.FC<MessageContentProps> = ({ content, sender 
         <button
           key={`btn-whatsapp-${i}`}
           className="bh-cta-btn bh-cta-whatsapp"
-          onClick={() => window.open('https://wa.me/491637830812', '_blank', 'noopener,noreferrer')}
-          aria-label="WhatsApp call"
+          onClick={() => window.open(CONTACT_LINKS.whatsapp, '_blank', 'noopener,noreferrer')}
+          aria-label="WhatsApp"
         >
-          💬 WhatsApp call
+          💬 WhatsApp
         </button>
       );
       continue;
@@ -55,7 +53,7 @@ export const MessageContent: React.FC<MessageContentProps> = ({ content, sender 
         <button
           key={`btn-telegram-${i}`}
           className="bh-cta-btn bh-cta-telegram"
-          onClick={() => window.open('https://t.me/kingarthi', '_blank', 'noopener,noreferrer')}
+          onClick={() => window.open(CONTACT_LINKS.telegram, '_blank', 'noopener,noreferrer')}
           aria-label="Telegram"
         >
           ✈️ Telegram
@@ -64,15 +62,29 @@ export const MessageContent: React.FC<MessageContentProps> = ({ content, sender 
       continue;
     }
 
-    if (line === '{{BTN_CONTACT}}') {
+    if (line === '{{BTN_CONTACT_FORM}}') {
       elements.push(
         <button
-          key={`btn-contact-${i}`}
+          key={`btn-contact-form-${i}`}
           className="bh-cta-btn bh-cta-contact"
-          onClick={() => window.open('https://bunnyhoneyclub.com/contact-us', '_blank', 'noopener,noreferrer')}
-          aria-label="Contact form"
+          onClick={() => window.open(CONTACT_LINKS.contactForm, '_blank', 'noopener,noreferrer')}
+          aria-label="Contact Form"
         >
-          📝 Contact form
+          📝 Contact Form
+        </button>
+      );
+      continue;
+    }
+
+    if (line === '{{BTN_CALL_US}}') {
+      elements.push(
+        <button
+          key={`btn-call-us-${i}`}
+          className="bh-cta-btn bh-cta-call"
+          onClick={() => window.open(CONTACT_LINKS.callUs, '_blank', 'noopener,noreferrer')}
+          aria-label="Call Us"
+        >
+          📞 Call Us
         </button>
       );
       continue;
