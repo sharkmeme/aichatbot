@@ -7,27 +7,36 @@ export class DatabaseService {
    * Find or create a conversation by session ID
    */
   async findOrCreateConversation(sessionId: string): Promise<Conversation> {
+    console.log('[DB] findOrCreateConversation - sessionId:', sessionId);
     const client = await pool.connect();
     try {
       // Try to find existing conversation
+      console.log('[DB] Searching for existing conversation...');
       let result = await client.query<Conversation>(
         'SELECT * FROM conversations WHERE session_id = $1',
         [sessionId]
       );
 
       if (result.rows.length > 0) {
+        console.log('[DB] Found existing conversation:', result.rows[0].id);
         return result.rows[0];
       }
 
       // Create new conversation
+      console.log('[DB] Creating new conversation...');
+      const newId = uuidv4();
       result = await client.query<Conversation>(
         `INSERT INTO conversations (id, session_id, created_at, updated_at)
          VALUES ($1, $2, NOW(), NOW())
          RETURNING *`,
-        [uuidv4(), sessionId]
+        [newId, sessionId]
       );
 
+      console.log('[DB] Created new conversation:', result.rows[0].id);
       return result.rows[0];
+    } catch (error) {
+      console.error('[DB] Error in findOrCreateConversation:', error);
+      throw error;
     } finally {
       client.release();
     }
@@ -42,16 +51,22 @@ export class DatabaseService {
     content: string,
     metadata?: any
   ): Promise<Message> {
+    console.log('[DB] insertMessage - conversationId:', conversationId, 'sender:', sender, 'content preview:', content.substring(0, 50));
     const client = await pool.connect();
     try {
+      const messageId = uuidv4();
       const result = await client.query<Message>(
         `INSERT INTO messages (id, conversation_id, sender, content, metadata, created_at)
          VALUES ($1, $2, $3, $4, $5, NOW())
          RETURNING *`,
-        [uuidv4(), conversationId, sender, content, metadata ? JSON.stringify(metadata) : null]
+        [messageId, conversationId, sender, content, metadata ? JSON.stringify(metadata) : null]
       );
 
+      console.log('[DB] Message inserted successfully:', messageId);
       return result.rows[0];
+    } catch (error) {
+      console.error('[DB] Error in insertMessage:', error);
+      throw error;
     } finally {
       client.release();
     }
@@ -61,6 +76,7 @@ export class DatabaseService {
    * Get recent messages for a conversation (for context)
    */
   async getRecentMessages(conversationId: string, limit: number = 10): Promise<Message[]> {
+    console.log('[DB] getRecentMessages - conversationId:', conversationId, 'limit:', limit);
     const client = await pool.connect();
     try {
       const result = await client.query<Message>(
@@ -71,8 +87,12 @@ export class DatabaseService {
         [conversationId, limit]
       );
 
+      console.log('[DB] Found', result.rows.length, 'recent messages');
       // Return in chronological order (oldest first)
       return result.rows.reverse();
+    } catch (error) {
+      console.error('[DB] Error in getRecentMessages:', error);
+      throw error;
     } finally {
       client.release();
     }
