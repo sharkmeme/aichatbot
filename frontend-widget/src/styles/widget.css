@@ -342,18 +342,30 @@
   height: 20px;
 }
 
-/* Mobile responsiveness */
+/* Mobile responsiveness - Fixed bottom sheet approach */
 @media (max-width: 480px) {
   .bh-chat-window {
-    position: fixed;
-    top: 0;
-    bottom: 0;
-    right: 0;
-    left: 0;
-    width: 100%;
-    height: var(--bh-vv-height, 100dvh); /* Use visualViewport height, fallback to dvh */
-    max-height: var(--bh-vv-height, 100dvh);
-    border-radius: 0;
+    /* Fixed bottom sheet - always anchored to bottom */
+    position: fixed !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    top: auto !important;
+
+    /* Full width, dynamic height (set by JS) */
+    width: 100% !important;
+    height: calc(100dvh - env(safe-area-inset-bottom)) !important;
+    max-height: 100dvh !important;
+
+    /* No border radius on mobile */
+    border-radius: 0 !important;
+
+    /* Prevent background scroll and zoom */
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+
+    /* Ensure no transforms or scaling */
+    transform: none !important;
   }
 
   .bh-launcher {
@@ -361,10 +373,13 @@
     right: 16px;
   }
 
-  /* Ensure header is fully visible on mobile */
+  /* Ensure header is fully visible and fixed */
   .bh-header {
     flex-shrink: 0;
     padding: 12px 16px;
+    position: sticky;
+    top: 0;
+    z-index: 10;
   }
 
   .bh-header-text h3 {
@@ -375,20 +390,33 @@
     font-size: 11px;
   }
 
-  /* Ensure messages area scrolls properly */
+  /* Messages area scrolls internally */
   .bh-messages {
     flex: 1;
     overflow-y: auto;
+    overflow-x: hidden;
     -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
     padding: 16px;
     padding-bottom: 20px;
   }
 
-  /* Ensure input area is visible */
+  /* Input area fixed at bottom */
   .bh-input-area {
     flex-shrink: 0;
     padding: 12px 16px;
     padding-bottom: max(12px, env(safe-area-inset-bottom));
+    background: white;
+    border-top: 1px solid var(--bh-border);
+  }
+
+  /* Prevent iOS zoom on input focus - CRITICAL */
+  .bh-input,
+  .bh-input:focus,
+  input,
+  textarea {
+    font-size: 16px !important;
+    line-height: 1.4 !important;
   }
 
   /* Adjust message widths for mobile */

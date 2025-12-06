@@ -1,40 +1,33 @@
 /**
  * Visual Viewport utilities for mobile keyboard handling
- * Prevents chat from being cut off when mobile keyboard opens
+ * Fixed-bottom sheet approach - no zoom, no glitches
  */
-
-export interface ViewportDimensions {
-  height: number;
-  width: number;
-}
 
 /**
  * Setup visualViewport listener for mobile keyboard handling
+ * Uses fixed-bottom sheet approach for WhatsApp/Telegram-like behavior
  * Returns cleanup function
  */
-export function setupViewportListener(
-  element: HTMLElement,
-  onResize?: (dimensions: ViewportDimensions) => void
-): () => void {
-  // Check if visualViewport is supported
+export function setupViewportListener(element: HTMLElement): () => void {
+  // Check if visualViewport is supported (mainly for iOS)
   if (!window.visualViewport) {
     return () => {}; // No-op cleanup
   }
 
   const handleResize = () => {
     const viewport = window.visualViewport!;
-    const dimensions: ViewportDimensions = {
-      height: viewport.height,
-      width: viewport.width,
-    };
 
-    // Update CSS variable for responsive height
-    element.style.setProperty('--bh-vv-height', `${viewport.height}px`);
+    // Disable transitions to prevent glitching during resize
+    element.style.transition = 'none';
 
-    // Call optional callback
-    if (onResize) {
-      onResize(dimensions);
-    }
+    // Set height directly to visualViewport height
+    // This makes the chat shrink smoothly when keyboard opens
+    element.style.height = `${viewport.height}px`;
+
+    // Re-enable transitions after a frame
+    requestAnimationFrame(() => {
+      element.style.transition = '';
+    });
   };
 
   // Initial setup
@@ -42,13 +35,11 @@ export function setupViewportListener(
 
   // Listen for viewport changes (keyboard open/close)
   window.visualViewport.addEventListener('resize', handleResize);
-  window.visualViewport.addEventListener('scroll', handleResize);
 
   // Return cleanup function
   return () => {
     if (window.visualViewport) {
       window.visualViewport.removeEventListener('resize', handleResize);
-      window.visualViewport.removeEventListener('scroll', handleResize);
     }
   };
 }
