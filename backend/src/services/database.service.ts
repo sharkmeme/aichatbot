@@ -81,7 +81,7 @@ export class DatabaseService {
   /**
    * Upsert lead data
    */
-  async upsertLead(conversationId: string, leadData: Lead): Promise<Lead> {
+  async upsertLead(conversationId: string, sessionId: string, leadData: Lead): Promise<Lead> {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -101,6 +101,7 @@ export class DatabaseService {
 
       if (conversation.lead_id) {
         // Update existing lead
+        console.log('[Lead] Updating existing lead:', conversation.lead_id);
         const updateResult = await client.query<Lead>(
           `UPDATE leads
            SET name = COALESCE($1, name),
@@ -112,8 +113,9 @@ export class DatabaseService {
                budget_range = COALESCE($7, budget_range),
                preferred_contact_channel = COALESCE($8, preferred_contact_channel),
                notes = COALESCE($9, notes),
+               language = COALESCE($10, language),
                updated_at = NOW()
-           WHERE id = $10
+           WHERE id = $11
            RETURNING *`,
           [
             leadData.name || null,
@@ -125,15 +127,18 @@ export class DatabaseService {
             leadData.budget_range || null,
             leadData.preferred_contact_channel || null,
             leadData.notes || null,
+            leadData.language || null,
             conversation.lead_id,
           ]
         );
         lead = updateResult.rows[0];
+        console.log('[Lead] Updated successfully');
       } else {
         // Create new lead
+        console.log('[Lead] Creating new lead for session:', sessionId);
         const insertResult = await client.query<Lead>(
-          `INSERT INTO leads (id, name, email, phone, business_type, company_name, interest_area, budget_range, preferred_contact_channel, notes, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())
+          `INSERT INTO leads (id, name, email, phone, business_type, company_name, interest_area, budget_range, preferred_contact_channel, notes, language, session_id, source, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())
            RETURNING *`,
           [
             uuidv4(),
@@ -146,9 +151,13 @@ export class DatabaseService {
             leadData.budget_range || null,
             leadData.preferred_contact_channel || null,
             leadData.notes || null,
+            leadData.language || null,
+            sessionId,
+            'website_chat',
           ]
         );
         lead = insertResult.rows[0];
+        console.log('[Lead] Created successfully:', lead.id);
 
         // Link lead to conversation
         await client.query(
@@ -161,6 +170,7 @@ export class DatabaseService {
       return lead;
     } catch (error) {
       await client.query('ROLLBACK');
+      console.error('[Lead] Failed to save lead:', error);
       throw error;
     } finally {
       client.release();

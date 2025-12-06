@@ -40,10 +40,17 @@ router.post(
         sanitizedMessage
       );
 
-      // Upsert lead if we extracted lead data
+      // Upsert lead if we extracted lead data (non-blocking)
       let updatedLead = null;
       if (lead && Object.values(lead).some(v => v !== null && v !== undefined && v !== '')) {
-        updatedLead = await dbService.upsertLead(conversation.id, lead);
+        try {
+          console.log('[Chat] LEAD_JSON extracted:', lead);
+          updatedLead = await dbService.upsertLead(conversation.id, sanitizedSessionId, lead);
+          console.log('[Chat] Lead saved successfully');
+        } catch (error) {
+          // Log error but don't break the chat
+          console.error('[Chat] Error saving lead (non-blocking):', error);
+        }
       }
 
       // Insert bot message with lead metadata

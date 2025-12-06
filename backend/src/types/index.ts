@@ -9,6 +9,9 @@ export interface Lead {
   budget_range?: string;
   preferred_contact_channel?: string;
   notes?: string;
+  language?: string;
+  session_id?: string;
+  source?: string;
   created_at?: Date;
   updated_at?: Date;
 }

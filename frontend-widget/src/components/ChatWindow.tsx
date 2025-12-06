@@ -4,6 +4,7 @@ import { ChatAPI } from '../utils/api';
 import { getOrCreateSessionId } from '../utils/sessionManager';
 import { MessageContent } from './MessageContent';
 import { loadConversation, saveConversation } from '../utils/conversationStorage';
+import { setupViewportListener } from '../utils/viewport';
 
 interface ChatWindowProps {
   isOpen: boolean;
@@ -17,6 +18,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ isOpen, onClose, backend
   const [isLoading, setIsLoading] = useState(false);
   const [sessionId] = useState(() => getOrCreateSessionId());
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const chatWindowRef = useRef<HTMLDivElement>(null);
   const chatAPI = useRef(new ChatAPI(backendUrl));
 
   // Load conversation from localStorage on mount
@@ -49,6 +51,17 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ isOpen, onClose, backend
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Setup visualViewport listener for mobile keyboard handling
+  useEffect(() => {
+    if (!chatWindowRef.current || !isOpen) return;
+
+    const cleanup = setupViewportListener(chatWindowRef.current);
+
+    return () => {
+      cleanup();
+    };
+  }, [isOpen]);
 
   const handleSend = async () => {
     const message = inputValue.trim();
@@ -106,7 +119,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ isOpen, onClose, backend
   if (!isOpen) return null;
 
   return (
-    <div className="bh-chat-window">
+    <div className="bh-chat-window" ref={chatWindowRef}>
       {/* Header */}
       <div className="bh-header">
         <div className="bh-header-content">
