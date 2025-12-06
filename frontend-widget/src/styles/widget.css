@@ -248,6 +248,69 @@
   box-shadow: 0 4px 8px rgba(139, 92, 246, 0.3);
 }
 
+/* CTA Buttons (Meeting, WhatsApp, Telegram, Contact) */
+.bh-cta-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 18px;
+  margin: 4px 6px 4px 0;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.bh-cta-primary {
+  background: var(--bh-primary);
+  color: white;
+}
+
+.bh-cta-primary:hover {
+  background: var(--bh-primary-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(139, 92, 246, 0.3);
+}
+
+.bh-cta-whatsapp {
+  background: #25D366;
+  color: white;
+}
+
+.bh-cta-whatsapp:hover {
+  background: #1ebd56;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(37, 211, 102, 0.3);
+}
+
+.bh-cta-telegram {
+  background: #0088cc;
+  color: white;
+}
+
+.bh-cta-telegram:hover {
+  background: #0077b3;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(0, 136, 204, 0.3);
+}
+
+.bh-cta-contact {
+  background: var(--bh-secondary);
+  color: var(--bh-text);
+  border: 1px solid var(--bh-border);
+}
+
+.bh-cta-contact:hover {
+  background: #e5e7eb;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
 /* Loading indicator */
 .bh-loading {
   display: flex;
