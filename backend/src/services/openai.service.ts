@@ -16,7 +16,8 @@ export class OpenAIService {
    */
   async generateChatCompletion(
     messages: Message[],
-    userMessage: string
+    userMessage: string,
+    existingLead?: Lead | null
   ): Promise<{ reply: string; lead: Lead | null }> {
     try {
       // Build conversation history for OpenAI
@@ -27,9 +28,31 @@ export class OpenAIService {
         },
       ];
 
-      // Add recent conversation history (last 10 messages)
-      const recentMessages = messages.slice(-10);
-      for (const msg of recentMessages) {
+      // Inject existing lead context if available
+      if (existingLead) {
+        const leadFields: string[] = [];
+        if (existingLead.name) leadFields.push(`- name: ${existingLead.name}`);
+        if (existingLead.email) leadFields.push(`- email: ${existingLead.email}`);
+        if (existingLead.phone) leadFields.push(`- phone: ${existingLead.phone}`);
+        if (existingLead.interest_area) leadFields.push(`- interest_area: ${existingLead.interest_area}`);
+        if (existingLead.budget_range) leadFields.push(`- budget_range: ${existingLead.budget_range}`);
+        if (existingLead.business_type) leadFields.push(`- business_type: ${existingLead.business_type}`);
+        if (existingLead.company_name) leadFields.push(`- company_name: ${existingLead.company_name}`);
+        if (existingLead.preferred_contact_channel) leadFields.push(`- preferred_contact_channel: ${existingLead.preferred_contact_channel}`);
+
+        if (leadFields.length > 0) {
+          chatMessages.push({
+            role: 'system',
+            content: `KNOWN LEAD INFO (from database - DO NOT ask for these again):
+${leadFields.join('\n')}
+
+CRITICAL: You already have this information. DO NOT ask for any of these fields again. Use this info in your replies when relevant.`,
+          });
+        }
+      }
+
+      // Add recent conversation history
+      for (const msg of messages) {
         chatMessages.push({
           role: msg.sender === 'user' ? 'user' : 'assistant',
           content: msg.content,

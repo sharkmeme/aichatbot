@@ -33,21 +33,29 @@ router.post(
       const conversation = await dbService.findOrCreateConversation(sanitizedSessionId);
       console.log('[Chat] Conversation ID:', conversation.id);
 
+      // Look up existing lead data for this conversation
+      console.log('[Chat] Step 1.5: Look up existing lead...');
+      const existingLead = await dbService.getLeadByConversationId(conversation.id);
+      if (existingLead) {
+        console.log('[Chat] Found existing lead - name:', existingLead.name, 'email:', existingLead.email);
+      }
+
       // Insert user message
       console.log('[Chat] Step 2: Insert user message...');
       await dbService.insertMessage(conversation.id, 'user', sanitizedMessage);
       console.log('[Chat] User message inserted');
 
-      // Get recent messages for context
+      // Get recent messages for context (increased to 100 for better memory)
       console.log('[Chat] Step 3: Get recent messages...');
-      const recentMessages = await dbService.getRecentMessages(conversation.id, 10);
+      const recentMessages = await dbService.getRecentMessages(conversation.id);
       console.log('[Chat] Recent messages count:', recentMessages.length);
 
-      // Generate AI response
+      // Generate AI response with existing lead context
       console.log('[Chat] Step 4: Generate AI response...');
       const { reply, lead } = await openaiService.generateChatCompletion(
         recentMessages,
-        sanitizedMessage
+        sanitizedMessage,
+        existingLead
       );
       console.log('[Chat] AI response generated');
 

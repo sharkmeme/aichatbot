@@ -75,7 +75,7 @@ export class DatabaseService {
   /**
    * Get recent messages for a conversation (for context)
    */
-  async getRecentMessages(conversationId: string, limit: number = 10): Promise<Message[]> {
+  async getRecentMessages(conversationId: string, limit: number = 100): Promise<Message[]> {
     console.log('[DB] getRecentMessages - conversationId:', conversationId, 'limit:', limit);
     const client = await pool.connect();
     try {
@@ -92,6 +92,35 @@ export class DatabaseService {
       return result.rows.reverse();
     } catch (error) {
       console.error('[DB] Error in getRecentMessages:', error);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Get existing lead for a conversation
+   */
+  async getLeadByConversationId(conversationId: string): Promise<Lead | null> {
+    console.log('[DB] getLeadByConversationId - conversationId:', conversationId);
+    const client = await pool.connect();
+    try {
+      const result = await client.query<Lead>(
+        `SELECT l.* FROM leads l
+         INNER JOIN conversations c ON c.lead_id = l.id
+         WHERE c.id = $1`,
+        [conversationId]
+      );
+
+      if (result.rows.length > 0) {
+        console.log('[DB] Found existing lead:', result.rows[0].id, 'with email:', result.rows[0].email);
+        return result.rows[0];
+      }
+
+      console.log('[DB] No lead found for this conversation');
+      return null;
+    } catch (error) {
+      console.error('[DB] Error in getLeadByConversationId:', error);
       throw error;
     } finally {
       client.release();
