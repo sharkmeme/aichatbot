@@ -63,21 +63,25 @@ router.post(
       let updatedLead = null;
       if (lead && Object.values(lead).some(v => v !== null && v !== undefined && v !== '')) {
         try {
-          console.log('[Chat] Step 5: LEAD_JSON extracted:', JSON.stringify(lead));
+          console.log('[Chat] Step 5: LEAD_JSON extracted with data:', JSON.stringify(lead));
           updatedLead = await dbService.upsertLead(conversation.id, sanitizedSessionId, lead);
-          console.log('[Chat] Lead saved successfully');
+          console.log('[Chat] ✅ Lead saved successfully - ID:', updatedLead.id, 'Email:', updatedLead.email || 'none');
         } catch (error) {
           // Log error but don't break the chat
-          console.error('[Chat] Error saving lead (non-blocking):', error);
+          console.error('[Chat] ❌ Error saving lead (non-blocking):', error);
         }
+      } else if (lead) {
+        console.log('[Chat] Step 5: LEAD_JSON present but all fields null - skipping save');
       } else {
-        console.log('[Chat] Step 5: No lead data to save');
+        console.log('[Chat] Step 5: ⚠️  No LEAD_JSON found in response (model not following instructions!)');
       }
 
       // Insert bot message with lead metadata
       console.log('[Chat] Step 6: Insert bot message...');
-      await dbService.insertMessage(conversation.id, 'bot', reply, { lead: updatedLead });
-      console.log('[Chat] Bot message inserted');
+      await dbService.insertMessage(conversation.id, 'bot', reply, {
+        lead: updatedLead ? updatedLead.id : null
+      });
+      console.log('[Chat] Bot message inserted with lead metadata:', updatedLead ? updatedLead.id : 'none');
 
       // Return response
       const response: ChatResponse = {

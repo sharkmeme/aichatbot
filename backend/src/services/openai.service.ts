@@ -98,15 +98,20 @@ CRITICAL: You already have this information. DO NOT ask for any of these fields 
     if (leadJsonMatch) {
       // Extract and parse the JSON
       const leadJsonString = leadJsonMatch[1];
+      console.log('[OpenAI] Found LEAD_JSON:', leadJsonString.substring(0, 100) + '...');
       try {
         lead = JSON.parse(leadJsonString);
+        console.log('[OpenAI] Successfully parsed LEAD_JSON with', Object.keys(lead || {}).filter(k => (lead as any)[k] !== null).length, 'non-null fields');
       } catch (error) {
-        console.error('Failed to parse LEAD_JSON:', error);
-        console.error('Lead JSON string:', leadJsonString);
+        console.error('[OpenAI] Failed to parse LEAD_JSON:', error);
+        console.error('[OpenAI] Raw JSON string:', leadJsonString);
       }
 
       // Remove the LEAD_JSON block from the reply
       reply = content.replace(/LEAD_JSON:\s*\{[\s\S]*?\}/g, '').trim();
+    } else {
+      console.warn('[OpenAI] WARNING: Response did not contain LEAD_JSON (model may not be following instructions)');
+      console.warn('[OpenAI] Response preview:', content.substring(0, 200));
     }
 
     return { reply, lead };
