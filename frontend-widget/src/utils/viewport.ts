@@ -8,7 +8,10 @@
  * Uses fixed-bottom sheet approach for WhatsApp/Telegram-like behavior
  * Returns cleanup function
  */
-export function setupViewportListener(element: HTMLElement): () => void {
+export function setupViewportListener(
+  element: HTMLElement,
+  onResizeComplete?: () => void
+): () => void {
   // Check if visualViewport is supported (mainly for iOS)
   if (!window.visualViewport) {
     return () => {}; // No-op cleanup
@@ -27,6 +30,13 @@ export function setupViewportListener(element: HTMLElement): () => void {
     // Re-enable transitions after a frame
     requestAnimationFrame(() => {
       element.style.transition = '';
+
+      // Call the callback after resize is complete and layout is done
+      if (onResizeComplete) {
+        requestAnimationFrame(() => {
+          onResizeComplete();
+        });
+      }
     });
   };
 
@@ -36,10 +46,22 @@ export function setupViewportListener(element: HTMLElement): () => void {
   // Listen for viewport changes (keyboard open/close)
   window.visualViewport.addEventListener('resize', handleResize);
 
+  // Also listen for scroll events (iOS sometimes scrolls when keyboard opens)
+  const handleScroll = () => {
+    if (onResizeComplete) {
+      // Debounce scroll callback
+      requestAnimationFrame(() => {
+        onResizeComplete();
+      });
+    }
+  };
+  window.visualViewport.addEventListener('scroll', handleScroll);
+
   // Return cleanup function
   return () => {
     if (window.visualViewport) {
       window.visualViewport.removeEventListener('resize', handleResize);
+      window.visualViewport.removeEventListener('scroll', handleScroll);
     }
   };
 }

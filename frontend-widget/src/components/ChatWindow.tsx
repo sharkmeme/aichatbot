@@ -17,9 +17,49 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ isOpen, onClose, backend
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [sessionId] = useState(() => getOrCreateSessionId());
+  const [userHasScrolled, setUserHasScrolled] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatWindowRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const chatAPI = useRef(new ChatAPI(backendUrl));
+  const isScrollingToBottom = useRef(false);
+
+  // Robust scroll-to-bottom function that runs after React paint
+  const scrollToBottom = (force = false) => {
+    // If user has manually scrolled up and this isn't a forced scroll, don't auto-scroll
+    if (userHasScrolled && !force) return;
+
+    // Use requestAnimationFrame to ensure DOM is painted
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (messagesEndRef.current) {
+          isScrollingToBottom.current = true;
+          messagesEndRef.current.scrollIntoView({
+            behavior: 'auto', // Use 'auto' instead of 'smooth' for immediate scroll
+            block: 'end'
+          });
+          // Reset flag after a brief delay
+          setTimeout(() => {
+            isScrollingToBottom.current = false;
+          }, 100);
+        }
+      });
+    });
+  };
+
+  // Detect user manual scroll (not our auto-scroll)
+  const handleScroll = () => {
+    if (isScrollingToBottom.current) return;
+
+    const container = messagesContainerRef.current;
+    if (!container) return;
+
+    // Check if user is at the bottom (with small threshold for rounding)
+    const isAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 50;
+
+    // If not at bottom, user has manually scrolled up
+    setUserHasScrolled(!isAtBottom);
+  };
 
   // Load conversation from localStorage on mount
   useEffect(() => {
@@ -47,16 +87,29 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ isOpen, onClose, backend
     }
   }, [messages]);
 
-  // Auto-scroll to bottom
+  // Auto-scroll to bottom when messages change
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    scrollToBottom();
   }, [messages]);
+
+  // Scroll to bottom when widget opens or reopens
+  useEffect(() => {
+    if (isOpen) {
+      // Reset user scroll flag when widget opens
+      setUserHasScrolled(false);
+      // Force scroll to bottom
+      scrollToBottom(true);
+    }
+  }, [isOpen]);
 
   // Setup visualViewport listener for mobile keyboard handling
   useEffect(() => {
     if (!chatWindowRef.current || !isOpen) return;
 
-    const cleanup = setupViewportListener(chatWindowRef.current);
+    const cleanup = setupViewportListener(chatWindowRef.current, () => {
+      // Callback after viewport resize - scroll to bottom
+      scrollToBottom(true);
+    });
 
     return () => {
       cleanup();
@@ -165,7 +218,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ isOpen, onClose, backend
       </div>
 
       {/* Messages */}
-      <div className="bh-messages">
+      <div className="bh-messages" ref={messagesContainerRef} onScroll={handleScroll}>
         {messages.map((msg) => (
           <div key={msg.id} className={`bh-message bh-${msg.sender}`}>
             <div className="bh-message-avatar">{msg.sender === 'user' ? '👤' : '🐰'}</div>
@@ -186,7 +239,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ isOpen, onClose, backend
             </div>
           </div>
         )}
-        <div ref={messagesEndRef} />
+        <div ref={messagesEndRef} style={{ height: '1px' }} />
       </div>
 
       {/* Input */}
