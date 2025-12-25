@@ -184,7 +184,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ isOpen, onClose, backend
         </div>
         <div className="bh-header-actions">
           <a
-            href="https://bunny-honey-9a9aed.webflow.io/contact-us"
+            href="https://www.bunnyhoneyclub.com/contact"
             target="_blank"
             rel="noopener noreferrer"
             className="bh-contact-btn"
