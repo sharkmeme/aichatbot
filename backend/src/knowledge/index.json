@@ -1,0 +1,39 @@
+{
+  "docs": [
+    {
+      "id": "pricing",
+      "filename": "pricing.md",
+      "title": "Pricing & Budget Ranges",
+      "category": "sales",
+      "keywords": ["price", "pricing", "cost", "budget", "quote", "how much", "expense", "pay", "payment", "range", "€", "euro", "expensive", "cheap", "afford"]
+    },
+    {
+      "id": "services-overview",
+      "filename": "services-overview.md",
+      "title": "Services Overview",
+      "category": "general",
+      "keywords": ["service", "services", "offer", "do", "what", "provide", "help", "about", "overview", "who", "specialize", "work", "agency"]
+    },
+    {
+      "id": "ai-content-automation",
+      "filename": "ai-content-automation.md",
+      "title": "AI Content & Automation",
+      "category": "service",
+      "keywords": ["content", "youtube", "tiktok", "video", "social", "instagram", "blog", "seo", "faceless", "automation", "post", "posting", "reels", "shorts", "channel"]
+    },
+    {
+      "id": "workflow-automations",
+      "filename": "workflow-automations.md",
+      "title": "Workflow Automations",
+      "category": "service",
+      "keywords": ["automation", "workflow", "n8n", "lead", "outreach", "crm", "linkedin", "email", "recruiting", "hr", "telegram", "bot", "integration", "reporting", "analytics"]
+    },
+    {
+      "id": "ai-websites",
+      "filename": "ai-websites.md",
+      "title": "AI Websites & Software",
+      "category": "service",
+      "keywords": ["website", "chatbot", "chat", "dashboard", "saas", "mvp", "software", "app", "application", "webflow", "wordpress", "frontend", "backend", "development", "build"]
+    }
+  ]
+}

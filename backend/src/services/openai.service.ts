@@ -1,14 +1,17 @@
 import OpenAI from 'openai';
 import { config, SYSTEM_PROMPT } from '../config';
 import { OpenAIChatMessage, Lead, Message } from '../types';
+import { KnowledgeService } from './knowledge.service';
 
 export class OpenAIService {
   private client: OpenAI;
+  private knowledgeService: KnowledgeService;
 
   constructor() {
     this.client = new OpenAI({
       apiKey: config.openaiApiKey,
     });
+    this.knowledgeService = new KnowledgeService();
   }
 
   /**
@@ -27,6 +30,17 @@ export class OpenAIService {
           content: SYSTEM_PROMPT,
         },
       ];
+
+      // Retrieve and inject relevant knowledge documents
+      const relevantDocs = this.knowledgeService.retrieveRelevant(userMessage, 2);
+      if (relevantDocs.length > 0) {
+        const knowledgeContent = this.knowledgeService.formatForPrompt(relevantDocs);
+        chatMessages.push({
+          role: 'system',
+          content: knowledgeContent,
+        });
+        console.log(`[OpenAI] Injected ${relevantDocs.length} knowledge documents into context`);
+      }
 
       // Inject existing lead context if available
       if (existingLead) {
