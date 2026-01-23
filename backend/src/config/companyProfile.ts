@@ -13,50 +13,38 @@ export const companyProfile = {
 
   coreServices: [
     {
-      id: 'ai_content',
+      id: 'Studios',
       name: 'AI Content & Automation',
       description: 'Content systems for social media, blogs, SEO, faceless channels, etc.',
       examples: [
         'YouTube & TikTok automation for faceless channels',
         'AI content pipelines for Instagram, Reels, Shorts',
-        'Long-form → short-form repurposing workflows',
-        'Automated blog & SEO content generation',
-        'AI-powered social media scheduling & posting',
       ],
     },
     {
-      id: 'automations',
+      id: 'Bunny Code',
       name: 'Workflow Automations',
       description: 'n8n-based automations for outreach, lead gen, back-office.',
       examples: [
-        'Telegram HR bots for recruiting & onboarding',
-        'Lead collection & scoring workflows',
         'Outreach automations for LinkedIn & email',
         'CRM integrations & data sync automation',
-        'Automated reporting & analytics dashboards',
       ],
     },
     {
-      id: 'ai_websites',
+      id: 'Honey Software',
       name: 'AI Websites & Software',
       description: 'AI-powered landing pages, chatbots, internal tools and SaaS prototypes.',
       examples: [
-        'AI chat support on Webflow sites',
         'Custom dashboards for content and trading',
-        'Internal tools for agencies',
-        'AI-powered lead qualification chatbots',
         'Custom SaaS MVPs with AI features',
       ],
     },
     {
-      id: 'consulting',
+      id: 'VIP Club & Strategy',
       name: 'AI Consulting & Workshops',
       description: 'Strategy, playbooks, and training for teams.',
       examples: [
         'Workshops on AI content systems',
-        'Consulting on automation architecture',
-        '1:1 guidance for founders',
-        'AI strategy for marketing teams',
         'Custom AI playbooks for specific industries',
       ],
     },
