@@ -89,11 +89,20 @@ export class KnowledgeService {
     const normalizedMessage = userMessage.toLowerCase();
     const words = normalizedMessage.split(/\s+/);
 
+    // Detect if this is a pricing/packages query (increase limit and boost sales docs)
+    const isPricingQuery = /\b(pric(e|ing|es)|cost|package(s)?|plan(s)?|rate(s)?|fee(s)?|how much|budget)\b/i.test(normalizedMessage);
+    const effectiveLimit = isPricingQuery ? 3 : limit; // Retrieve 3 docs for pricing queries
+
     // Calculate relevance score for each document
     const scoredDocs = this.index.docs.map(doc => {
       let score = 0;
 
-      // Check keyword matches
+      // Boost sales category docs for pricing queries
+      if (isPricingQuery && doc.category === 'sales') {
+        score += 3; // Sales docs get +3 boost for pricing queries
+      }
+
+      // Check exact keyword matches
       for (const keyword of doc.keywords) {
         if (normalizedMessage.includes(keyword.toLowerCase())) {
           score += 2; // Keyword match worth 2 points
@@ -123,11 +132,11 @@ export class KnowledgeService {
     const relevantDocs = scoredDocs
       .filter(doc => doc.relevanceScore > 0)
       .sort((a, b) => b.relevanceScore - a.relevanceScore)
-      .slice(0, limit);
+      .slice(0, effectiveLimit);
 
     if (relevantDocs.length > 0) {
       console.log(
-        `[Knowledge] Retrieved ${relevantDocs.length} docs:`,
+        `[Knowledge] Retrieved ${relevantDocs.length} docs${isPricingQuery ? ' (pricing query)' : ''}:`,
         relevantDocs.map(d => `${d.title} (score: ${d.relevanceScore})`).join(', ')
       );
     } else {
