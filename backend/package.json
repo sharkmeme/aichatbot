@@ -5,7 +5,8 @@
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc",
+    "build": "tsc && npm run copy-knowledge",
+    "copy-knowledge": "mkdir -p dist/knowledge/docs && cp src/knowledge/index.json dist/knowledge/ && cp src/knowledge/docs/*.md dist/knowledge/docs/",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit"
   },

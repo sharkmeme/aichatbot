@@ -26,6 +26,9 @@ export class KnowledgeService {
   private knowledgePath: string;
 
   constructor() {
+    // In production (compiled), __dirname is /app/dist/services
+    // In development (tsx), __dirname is /app/backend/src/services
+    // Knowledge folder should be at ../knowledge in both cases
     this.knowledgePath = path.join(__dirname, '../knowledge');
     this.loadKnowledgeBase();
   }
@@ -35,12 +38,19 @@ export class KnowledgeService {
    */
   private loadKnowledgeBase(): void {
     try {
+      console.log(`[Knowledge] Attempting to load from: ${this.knowledgePath}`);
+
       // Load index.json
       const indexPath = path.join(this.knowledgePath, 'index.json');
+
+      if (!fs.existsSync(indexPath)) {
+        throw new Error(`index.json not found at ${indexPath}. Knowledge files may not be copied to dist folder.`);
+      }
+
       const indexContent = fs.readFileSync(indexPath, 'utf-8');
       this.index = JSON.parse(indexContent) as KnowledgeIndex;
 
-      console.log(`[Knowledge] Loaded index with ${this.index.docs.length} documents`);
+      console.log(`[Knowledge] ✓ Loaded index with ${this.index.docs.length} documents from ${this.knowledgePath}`);
 
       // Load all markdown files
       for (const doc of this.index.docs) {
@@ -51,12 +61,16 @@ export class KnowledgeService {
         const truncated = content.length > 800 ? content.substring(0, 800) + '...' : content;
         this.docContents.set(doc.id, truncated);
 
-        console.log(`[Knowledge] Loaded document: ${doc.title} (${content.length} chars, truncated to ${truncated.length})`);
+        console.log(`[Knowledge]   - ${doc.title} (${content.length} chars → ${truncated.length})`);
       }
 
-      console.log('[Knowledge] Knowledge base loaded successfully');
-    } catch (error) {
-      console.error('[Knowledge] Failed to load knowledge base:', error);
+      console.log(`[Knowledge] ✓ Knowledge base ready with ${this.index.docs.length} documents`);
+    } catch (error: any) {
+      console.error('[Knowledge] ✗ FAILED to load knowledge base');
+      console.error('[Knowledge]   Reason:', error.message);
+      console.error('[Knowledge]   Path attempted:', this.knowledgePath);
+      console.error('[Knowledge]   __dirname:', __dirname);
+      console.error('[Knowledge]   Chatbot will fallback to system prompt only.');
       this.index = { docs: [] };
     }
   }
