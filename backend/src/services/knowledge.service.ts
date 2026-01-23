@@ -57,8 +57,8 @@ export class KnowledgeService {
         const docPath = path.join(this.knowledgePath, 'docs', doc.filename);
         const content = fs.readFileSync(docPath, 'utf-8');
 
-        // Truncate content to max 800 characters to prevent token abuse
-        const truncated = content.length > 800 ? content.substring(0, 800) + '...' : content;
+        // Truncate content to max 500 characters to prevent token abuse
+        const truncated = content.length > 500 ? content.substring(0, 500) + '...' : content;
         this.docContents.set(doc.id, truncated);
 
         console.log(`[Knowledge]   - ${doc.title} (${content.length} chars → ${truncated.length})`);
@@ -153,6 +153,10 @@ export class KnowledgeService {
 
 ${formatted}
 
-NOTE: The above information is reference material from Bunny Honey's knowledge base. Use it to provide accurate answers. Always cite sources when using this information.`;
+IMPORTANT REMINDERS:
+1. Use the above knowledge to provide accurate, grounded answers
+2. Cite sources when using this information
+3. CRITICAL: You MUST still output LEAD_JSON at the end of your response (as required in your main system prompt)
+4. Keep responses under 250 characters and follow all formatting rules from your main instructions`;
   }
 }
