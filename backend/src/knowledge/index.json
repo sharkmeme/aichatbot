@@ -1,39 +1,123 @@
 {
   "docs": [
     {
-      "id": "pricing",
-      "filename": "pricing.md",
-      "title": "Pricing & Budget Ranges",
-      "category": "sales",
-      "keywords": ["price", "pricing", "cost", "budget", "quote", "how much", "expense", "pay", "payment", "range", "€", "euro", "expensive", "cheap", "afford"]
+      "id": "about-us",
+      "filename": "about-us.md",
+      "title": "About Bunny Honey Club AI",
+      "category": "general",
+      "keywords": ["about", "about us", "company", "who are you", "legal", "srl", "romania", "romanian", "eu", "european union", "entity"]
     },
     {
       "id": "services-overview",
       "filename": "services-overview.md",
-      "title": "Services Overview",
+      "title": "What We Offer (Overview)",
       "category": "general",
-      "keywords": ["service", "services", "offer", "do", "what", "provide", "help", "about", "overview", "who", "specialize", "work", "agency"]
+      "keywords": ["services", "what do you do", "what you offer", "offer", "help with", "agency", "ai strategy", "workshops", "training", "content", "automation", "software"]
     },
     {
-      "id": "ai-content-automation",
-      "filename": "ai-content-automation.md",
-      "title": "AI Content & Automation",
+      "id": "studios",
+      "filename": "studios.md",
+      "title": "Bunny Honey Studios",
       "category": "service",
-      "keywords": ["content", "youtube", "tiktok", "video", "social", "instagram", "blog", "seo", "faceless", "automation", "post", "posting", "reels", "shorts", "channel"]
+      "keywords": ["studios", "ai video", "video", "commercial", "brand ads", "film", "movie", "music video", "visuals", "content production", "short form", "long form", "social content"]
     },
     {
-      "id": "workflow-automations",
-      "filename": "workflow-automations.md",
-      "title": "Workflow Automations",
+      "id": "bunny-code",
+      "filename": "bunny-code.md",
+      "title": "Bunny Code (Automation)",
       "category": "service",
-      "keywords": ["automation", "workflow", "n8n", "lead", "outreach", "crm", "linkedin", "email", "recruiting", "hr", "telegram", "bot", "integration", "reporting", "analytics"]
+      "keywords": ["code", "bunny code", "automation", "workflows", "n8n", "integrations", "crm", "lead", "outreach", "follow up", "slack", "email", "monitoring", "ops", "support"]
     },
     {
-      "id": "ai-websites",
-      "filename": "ai-websites.md",
-      "title": "AI Websites & Software",
+      "id": "honey-software",
+      "filename": "honey-software.md",
+      "title": "Honey Software (Websites + SaaS)",
       "category": "service",
-      "keywords": ["website", "chatbot", "chat", "dashboard", "saas", "mvp", "software", "app", "application", "webflow", "wordpress", "frontend", "backend", "development", "build"]
+      "keywords": ["software", "honey software", "website", "websites", "web app", "app", "saas", "dashboard", "ui", "ux", "product design", "architecture", "maintenance", "webflow", "gsap", "cms"]
+    },
+    {
+      "id": "vip-club",
+      "filename": "vip-club.md",
+      "title": "VIP Club (Workshops + Coaching + Community)",
+      "category": "service",
+      "keywords": ["vip", "vip club", "mastermind", "masterminds", "fast track", "coaching", "community", "workshops", "training", "prompts", "network", "tutorials"]
+    },
+    {
+      "id": "pricing-general",
+      "filename": "pricing-general.md",
+      "title": "Pricing (General)",
+      "category": "sales",
+      "keywords": ["pricing", "price", "cost", "budget", "packages", "vat", "usd", "how much", "rates"]
+    },
+    {
+      "id": "studios-pricing",
+      "filename": "studios-pricing.md",
+      "title": "Studios Pricing",
+      "category": "sales",
+      "keywords": ["studios pricing", "starter", "growth", "content engine", "studio partner", "ai content creation", "videos per month", "runtime", "500", "1500", "3500"]
+    },
+    {
+      "id": "code-custom-pricing",
+      "filename": "code-custom-pricing.md",
+      "title": "Bunny Code — Custom Automation Packages",
+      "category": "sales",
+      "keywords": ["custom automation", "automation audit", "blueprint", "core business automation", "growth automation stack", "automation partner", "1000", "2750", "4500", "8500"]
+    },
+    {
+      "id": "software-websites-pricing",
+      "filename": "software-websites-pricing.md",
+      "title": "Honey Software — Website Packages",
+      "category": "sales",
+      "keywords": ["website pricing", "essential", "elevate", "business", "enterprise", "one page", "multi page", "site care", "750", "1950", "3550", "9350"]
+    },
+    {
+      "id": "software-saas-pricing",
+      "filename": "software-saas-pricing.md",
+      "title": "Honey Software — SaaS Packages",
+      "category": "sales",
+      "keywords": ["saas pricing", "mvp builder", "product launch", "startup", "from 5000", "from 12000", "custom offer"]
+    },
+    {
+      "id": "vip-pricing",
+      "filename": "vip-pricing.md",
+      "title": "VIP Club Pricing",
+      "category": "sales",
+      "keywords": ["vip pricing", "masterminds", "fast track", "49", "149", "coaching price", "membership"]
+    },
+    {
+      "id": "lead-intake-crm-automation",
+      "filename": "lead-intake-crm-automation.md",
+      "title": "Pre-Built: Lead Intake & CRM Automation",
+      "category": "sales",
+      "keywords": ["lead intake", "crm automation", "lead capture", "lead scoring", "forms", "ads", "landing page", "950", "299"]
+    },
+    {
+      "id": "ai-outreach-follow-up-system",
+      "filename": "ai-outreach-follow-up-system.md",
+      "title": "Pre-Built: AI Outreach & Follow-Up System",
+      "category": "sales",
+      "keywords": ["outreach", "follow up", "follow-up", "cold email", "personalized messages", "reply detection", "1350", "550"]
+    },
+    {
+      "id": "client-support-ticket-automation",
+      "filename": "client-support-ticket-automation.md",
+      "title": "Pre-Built: Client Support Ticket Automation",
+      "category": "sales",
+      "keywords": ["support ticket", "ticket automation", "email tickets", "routing", "priority", "category detection", "950", "299"]
+    },
+    {
+      "id": "ai-customer-chat-assistant",
+      "filename": "ai-customer-chat-assistant.md",
+      "title": "Pre-Built: AI Customer Chat Assistant",
+      "category": "sales",
+      "keywords": ["chat assistant", "chatbot", "website chat", "telegram", "whatsapp", "instagram", "faq", "lead qualification", "1750", "550"]
+    },
+    {
+      "id": "ai-customer-phone-support",
+      "filename": "ai-customer-phone-support.md",
+      "title": "Pre-Built: AI Customer Phone Support",
+      "category": "sales",
+      "keywords": ["phone support", "voice assistant", "calls", "call routing", "call summaries", "crm updates", "2750", "850"]
     }
   ]
 }
