@@ -47,42 +47,43 @@
       "filename": "pricing-general.md",
       "title": "Pricing (General)",
       "category": "sales",
-      "keywords": ["pricing", "price", "cost", "budget", "packages", "vat", "usd", "how much", "rates"]
+      "keywords": ["cost", "budget", "packages", "vat", "usd", "how much", "rates"]
     },
     {
       "id": "studios-pricing",
       "filename": "studios-pricing.md",
       "title": "Studios Pricing",
       "category": "sales",
-      "keywords": ["studios pricing", "starter", "growth", "content engine", "studio partner", "ai content creation", "videos per month", "runtime", "500", "1500", "3500"]
+      "keywords": ["studios pricing", "starter", "growth", "content engine", "studio partner", "ai content creation", "videos per month", "runtime", "500", "1500", "3500","studios packages","studios plans","packages","package","plans","plan","tiers","tier","pricing","price","cost","how much","monthly","per month","starter","growth","content engine","studio partner"]
+},]
     },
     {
       "id": "code-custom-pricing",
       "filename": "code-custom-pricing.md",
       "title": "Bunny Code — Custom Automation Packages",
       "category": "sales",
-      "keywords": ["custom automation", "automation audit", "blueprint", "core business automation", "growth automation stack", "automation partner", "1000", "2750", "4500", "8500"]
+      "keywords": ["custom automation", "automation audit", "blueprint", "core business automation", "growth automation stack", "automation partner", "1000", "2750", "4500", "8500","package","packages","plan","plans","tiers","tier"]
     },
     {
       "id": "software-websites-pricing",
       "filename": "software-websites-pricing.md",
       "title": "Honey Software — Website Packages",
       "category": "sales",
-      "keywords": ["website pricing", "essential", "elevate", "business", "enterprise", "one page", "multi page", "site care", "750", "1950", "3550", "9350"]
+      "keywords": ["website pricing", "essential", "elevate", "business", "enterprise", "one page", "multi page", "site care", "750", "1950", "3550", "9350","package","packages","plan","plans","tiers","tier"]
     },
     {
       "id": "software-saas-pricing",
       "filename": "software-saas-pricing.md",
       "title": "Honey Software — SaaS Packages",
       "category": "sales",
-      "keywords": ["saas pricing", "mvp builder", "product launch", "startup", "from 5000", "from 12000", "custom offer"]
+      "keywords": ["saas pricing", "mvp builder", "product launch", "startup", "from 5000", "from 12000", "custom offer","package","packages","plan","plans","tiers","tier"]
     },
     {
       "id": "vip-pricing",
       "filename": "vip-pricing.md",
       "title": "VIP Club Pricing",
       "category": "sales",
-      "keywords": ["vip pricing", "masterminds", "fast track", "49", "149", "coaching price", "membership"]
+      "keywords": ["vip pricing", "masterminds", "fast track", "49", "149", "coaching price", "membership","package","packages","plan","plans","tiers","tier"]
     },
     {
       "id": "lead-intake-crm-automation",
@@ -96,7 +97,8 @@
       "filename": "ai-outreach-follow-up-system.md",
       "title": "Pre-Built: AI Outreach & Follow-Up System",
       "category": "sales",
-      "keywords": ["outreach", "follow up", "follow-up", "cold email", "personalized messages", "reply detection", "1350", "550"]
+      "keywords": ["outreach", "follow up", "follow-up", "cold email", "personalized messages", "reply detection", "1350", "550", "ai outreach","outreach","linkedin outreach","prospecting","price","pricing","cost","how much","support","retainer"]
+}]
     },
     {
       "id": "client-support-ticket-automation",
