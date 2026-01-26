@@ -1,7 +1,7 @@
 import { Message } from '../types';
 import { PRICING_DATA } from '../data/pricing';
 
-export type Intent = 'pricing' | 'inclusions' | 'budget_confirmation' | 'general';
+export type Intent = 'pricing' | 'inclusions' | 'budget_confirmation' | 'definition' | 'billing_cadence' | 'general';
 
 export interface ConversationTopic {
   division?: string; // studios, vip, code, software
@@ -20,6 +20,18 @@ export class IntentService {
    */
   detectIntent(message: string): Intent {
     const normalized = message.toLowerCase().trim();
+
+    // Billing cadence questions (high priority - very specific)
+    if (/\b(it'?s?|is (it|this|that)|are (they|these)) (a )?(monthly|month-to-month|subscription|recurring)\??$/i.test(normalized) ||
+        /\b(it'?s?|is (it|this|that)|are (they|these)) (a )?(one-?time|single payment|upfront)\??$/i.test(normalized) ||
+        /\b(monthly|one-?time|subscription|recurring|payment terms?)\??$/i.test(normalized)) {
+      return 'billing_cadence';
+    }
+
+    // Definition questions (what is X?)
+    if (/^what (is|are|does) (the )?(vip|studios?|bunny code|honey software|masterminds?|fast track)/i.test(normalized)) {
+      return 'definition';
+    }
 
     // Budget confirmation patterns
     const budgetConfirmations = [
@@ -52,7 +64,8 @@ export class IntentService {
     for (const pkgName of packageNames) {
       // If message is just the package name (with minimal extra words)
       if (normalized === pkgName || normalized === `${pkgName}?` ||
-          normalized === `the ${pkgName}` || normalized === `${pkgName} package`) {
+          normalized === `the ${pkgName}` || normalized === `${pkgName} package` ||
+          normalized === `what'?s ${pkgName}` || normalized === `whats ${pkgName}`) {
         return 'pricing';
       }
     }
@@ -98,14 +111,48 @@ export class IntentService {
     const normalized = message.toLowerCase();
     const topic: ConversationTopic = {};
 
-    // Division detection
-    if (/\b(studios?|video|videos|content creation|ai video)\b/i.test(normalized)) {
+    // "and for X?" pattern - topic switch
+    const andForMatch = /\b(and|what about) (for |about )?(the )?(crm|outreach|ticket|chatbot|chat|phone|lead)/i.exec(normalized);
+    if (andForMatch) {
+      const keyword = andForMatch[4];
+      if (/crm|lead/i.test(keyword)) {
+        topic.package = 'lead-intake-crm';
+        topic.division = 'code';
+        return topic;
+      } else if (/outreach/i.test(keyword)) {
+        topic.package = 'ai-outreach';
+        topic.division = 'code';
+        return topic;
+      } else if (/ticket/i.test(keyword)) {
+        topic.package = 'support-ticket';
+        topic.division = 'code';
+        return topic;
+      } else if (/chatbot|chat/i.test(keyword)) {
+        topic.package = 'chat-assistant';
+        topic.division = 'code';
+        return topic;
+      } else if (/phone/i.test(keyword)) {
+        topic.package = 'phone-support';
+        topic.division = 'code';
+        return topic;
+      }
+    }
+
+    // Content-type queries for Studios (brand ad, music video, etc.)
+    if (/\b(brand ad|music video|commercial|short.?form|long.?form|ai film|video ad|tiktok|reel)\b/i.test(normalized)) {
       topic.division = 'studios';
-    } else if (/\b(vip|club|coaching|masterminds?|fast track|workshop)\b/i.test(normalized)) {
+      // Do NOT set specific package - return division only
+      return topic;
+    }
+
+    // Division detection
+    if (/\b(studios?|video production|content creation|ai video)\b/i.test(normalized)) {
+      topic.division = 'studios';
+    } else if (/\b(vip|club|coaching|workshop)\b/i.test(normalized)) {
       topic.division = 'vip';
-    } else if (/\b(code|bunny code|automation|crm|outreach|lead|ticket|support)\b/i.test(normalized)) {
+    } else if (/\b(code|bunny code|automation)\b/i.test(normalized)) {
       topic.division = 'code';
-    } else if (/\b(software|honey software|website|chatbot|saas)\b/i.test(normalized)) {
+    } else if (/\b(software|honey software|website|saas)\b/i.test(normalized)) {
       topic.division = 'software';
     }
 
@@ -133,19 +180,33 @@ export class IntentService {
       topic.division = 'vip';
     }
     // Bunny Code packages
-    else if (/\b(lead intake|crm automation|lead.*crm|crm)\b/i.test(normalized)) {
+    else if (/\b(lead intake|crm automation|lead.*crm)\b/i.test(normalized)) {
       topic.package = 'lead-intake-crm';
       topic.division = 'code';
-    } else if (/\b(outreach|follow.?up|cold email|linkedin)\b/i.test(normalized)) {
+    } else if (/\bcrm\b/i.test(normalized) && !/outreach/i.test(normalized)) {
+      // "crm" alone (not in "crm updates from outreach")
+      topic.package = 'lead-intake-crm';
+      topic.division = 'code';
+    } else if (/\b(ai outreach|outreach system|follow.?up system)\b/i.test(normalized)) {
       topic.package = 'ai-outreach';
       topic.division = 'code';
-    } else if (/\b(support ticket|ticket automation)\b/i.test(normalized)) {
+    } else if (/\boutreach\b/i.test(normalized) && !/automation/i.test(normalized)) {
+      // "outreach" alone
+      topic.package = 'ai-outreach';
+      topic.division = 'code';
+    } else if (/\b(support ticket|ticket automation|ticket system)\b/i.test(normalized)) {
       topic.package = 'support-ticket';
       topic.division = 'code';
-    } else if (/\b(chat assistant|chatbot|website chat)\b/i.test(normalized)) {
+    } else if (/\bticket/i.test(normalized)) {
+      topic.package = 'support-ticket';
+      topic.division = 'code';
+    } else if (/\b(chat assistant|website chat)\b/i.test(normalized)) {
       topic.package = 'chat-assistant';
       topic.division = 'code';
-    } else if (/\b(phone support|voice assistant|call)\b/i.test(normalized)) {
+    } else if (/\bchatbot\b/i.test(normalized)) {
+      topic.package = 'chat-assistant';
+      topic.division = 'code';
+    } else if (/\b(phone support|voice assistant|call support)\b/i.test(normalized)) {
       topic.package = 'phone-support';
       topic.division = 'code';
     }

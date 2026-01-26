@@ -107,9 +107,28 @@ router.post(
       } else if (intent === 'inclusions') {
         // Deterministic inclusions response (NO LLM)
         console.log('[Chat] ✓ DETERMINISTIC INCLUSIONS PATH (no LLM call)');
-        const response = pricingResponder.generateInclusionsResponse(topic, isMultiplePackages);
-        reply = response.reply;
-        lead = response.lead;
+
+        // Handle "and the other?" for packages
+        if (isMultiplePackages && topic.package) {
+          // Get other packages in same division
+          const otherPackages = intentService.getOtherPackages(topic);
+          if (otherPackages.length > 0) {
+            // Show the first/only other package
+            const otherTopic = otherPackages[0];
+            const response = pricingResponder.generateInclusionsResponse(otherTopic, false);
+            reply = response.reply;
+            lead = response.lead;
+          } else {
+            // Fallback to normal inclusions
+            const response = pricingResponder.generateInclusionsResponse(topic, isMultiplePackages);
+            reply = response.reply;
+            lead = response.lead;
+          }
+        } else {
+          const response = pricingResponder.generateInclusionsResponse(topic, isMultiplePackages);
+          reply = response.reply;
+          lead = response.lead;
+        }
       } else if (intent === 'budget_confirmation') {
         // Budget confirmation - acknowledge and move forward
         console.log('[Chat] ✓ DETERMINISTIC BUDGET CONFIRMATION (no LLM call)');
@@ -125,6 +144,18 @@ router.post(
           preferred_contact_channel: undefined,
           notes: 'Budget confirmed'
         };
+      } else if (intent === 'definition') {
+        // Definition query - explain what X is
+        console.log('[Chat] ✓ DETERMINISTIC DEFINITION PATH (no LLM call)');
+        const response = pricingResponder.generateDefinitionResponse(topic);
+        reply = response.reply;
+        lead = response.lead;
+      } else if (intent === 'billing_cadence') {
+        // Billing cadence question - one-time vs monthly
+        console.log('[Chat] ✓ DETERMINISTIC BILLING CADENCE PATH (no LLM call)');
+        const response = pricingResponder.generateBillingCadenceResponse(topic);
+        reply = response.reply;
+        lead = response.lead;
       } else {
         // General query - use LLM with knowledge base
         console.log('[Chat] → LLM PATH (general query)');

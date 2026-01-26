@@ -217,4 +217,100 @@ export class PricingResponderService {
 
     return undefined;
   }
+
+  /**
+   * Generate billing cadence response for current topic
+   */
+  generateBillingCadenceResponse(topic: ConversationTopic): { reply: string; lead: Lead } {
+    console.log('[PricingResponder] Generating billing cadence response for topic:', topic);
+
+    let reply = '';
+    const lead: Lead = {
+      name: undefined,
+      email: undefined,
+      phone: undefined,
+      business_type: undefined,
+      company_name: undefined,
+      interest_area: undefined,
+      budget_range: undefined,
+      preferred_contact_channel: undefined,
+      notes: undefined
+    };
+
+    if (topic.package && topic.division) {
+      const division = PRICING_DATA[topic.division];
+      if (division) {
+        const pkg = division.packages.find(p => p.id === topic.package);
+        if (pkg) {
+          const basePrice = formatPrice(pkg.price, pkg.recurring);
+          reply = `${basePrice}`;
+
+          if (pkg.optional_support) {
+            const supportPrice = formatPrice(pkg.optional_support.price, pkg.optional_support.recurring);
+            reply += `\nOptional support: ${supportPrice}`;
+          }
+
+          lead.interest_area = `${division.name} - ${pkg.name}`;
+        }
+      }
+    }
+
+    if (!reply) {
+      reply = "Could you clarify which package you're asking about?";
+    }
+
+    return { reply, lead };
+  }
+
+  /**
+   * Generate definition response for a division or package
+   */
+  generateDefinitionResponse(topic: ConversationTopic): { reply: string; lead: Lead } {
+    console.log('[PricingResponder] Generating definition response for topic:', topic);
+
+    let reply = '';
+    const lead: Lead = {
+      name: undefined,
+      email: undefined,
+      phone: undefined,
+      business_type: undefined,
+      company_name: undefined,
+      interest_area: topic.division || topic.package,
+      budget_range: undefined,
+      preferred_contact_channel: undefined,
+      notes: undefined
+    };
+
+    if (topic.division) {
+      const division = PRICING_DATA[topic.division];
+      if (division) {
+        // Return division overview with all packages
+        reply = `${division.name}: ${this.getDivisionDescription(topic.division)}\n\nPackages:\n`;
+        division.packages.forEach(pkg => {
+          const price = formatPrice(pkg.price, pkg.recurring);
+          reply += `- ${pkg.name}: ${price}\n`;
+        });
+      }
+    }
+
+    if (!reply) {
+      reply = "I can explain our services! Which area interests you: Studios, VIP Club, or Bunny Code?";
+    }
+
+    return { reply, lead };
+  }
+
+  /**
+   * Get division description
+   */
+  private getDivisionDescription(divisionId: string): string {
+    const descriptions: Record<string, string> = {
+      'studios': 'AI video content creation for brands and creators',
+      'vip': 'AI coaching, workshops, and community membership',
+      'code': 'Pre-built automation systems for business workflows',
+      'software': 'Custom AI-powered websites and SaaS products'
+    };
+
+    return descriptions[divisionId] || 'Our service offerings';
+  }
 }
