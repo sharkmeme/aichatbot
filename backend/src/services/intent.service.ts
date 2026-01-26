@@ -28,8 +28,11 @@ export class IntentService {
       return 'billing_cadence';
     }
 
-    // Definition questions (what is X?)
-    if (/^what (is|are|does) (the )?(vip|studios?|bunny code|honey software|masterminds?|fast track)/i.test(normalized)) {
+    // Definition questions (what is X? - but NOT if pricing words are present)
+    const hasDefinitionPattern = /^what (is|are|does) (the |a |an )?(vip|studios?|bunny code|honey software|masterminds?|fast track|crm|outreach|chatbot|ticket)/i.test(normalized);
+    const hasPricingWords = /\b(price|pricing|cost|how much|ow much|much for|\$|rate|fee)\b/i.test(normalized);
+
+    if (hasDefinitionPattern && !hasPricingWords) {
       return 'definition';
     }
 
@@ -53,11 +56,45 @@ export class IntentService {
       return 'inclusions';
     }
 
+    // Package keyword detection (for prioritization)
+    const packageKeywords = [
+      'crm', 'outreach', 'ticket', 'chatbot', 'chat assistant', 'phone',
+      'starter', 'growth', 'content engine', 'studio partner',
+      'masterminds', 'fast track'
+    ];
+
+    const hasPackageKeyword = packageKeywords.some(keyword =>
+      new RegExp(`\\b${keyword.replace(/\s+/g, '\\s+')}\\b`, 'i').test(normalized)
+    );
+
+    // Typo-tolerant pricing patterns (high priority)
+    // Matches: "how much", "ow much", "much for", etc.
+    const pricingPatterns = [
+      /\b(h?ow|how's) much\b/i,              // "how much" or "ow much"
+      /\bmuch (for|is|does)\b/i,              // "much for", "much is"
+      /\b(what'?s? |whats )(the )?(price|pricing|cost)\b/i,
+      /\bhow (expensive|costly)\b/i,
+      /\b\$\s*\d/,                            // Dollar sign with number
+      /\bcost (of|for)\b/i,
+      /\bprice (for|of|on)\b/i
+    ];
+
+    for (const pattern of pricingPatterns) {
+      if (pattern.test(normalized)) {
+        return 'pricing';
+      }
+    }
+
+    // If package keyword + pricing-related word detected → PRICING (high confidence)
+    if (hasPackageKeyword && hasPricingWords) {
+      return 'pricing';
+    }
+
     // Exact package/offer name match (treat as pricing request)
     const packageNames = [
       'starter', 'growth', 'content engine', 'studio partner',
       'masterminds', 'fast track',
-      'lead intake', 'crm', 'ai outreach', 'outreach', 'support ticket',
+      'lead intake', 'ai outreach', 'outreach', 'support ticket',
       'chat assistant', 'chatbot', 'phone support'
     ];
 
@@ -70,12 +107,12 @@ export class IntentService {
       }
     }
 
-    // Pricing intent keywords
+    // Pricing intent keywords (less specific, lower priority)
     const pricingKeywords = [
-      'price', 'pricing', 'prices', 'cost', 'costs', 'how much',
+      'price', 'pricing', 'prices', 'cost', 'costs',
       'package', 'packages', 'plan', 'plans', 'tier', 'tiers',
       'rate', 'rates', 'fee', 'fees', 'monthly', 'per month',
-      'what does it cost', 'how expensive'
+      'what does it cost'
     ];
 
     // Inclusions intent keywords
@@ -93,7 +130,7 @@ export class IntentService {
       }
     }
 
-    // Check for pricing intent
+    // Check for pricing intent (broader keyword matching)
     for (const keyword of pricingKeywords) {
       if (normalized.includes(keyword)) {
         return 'pricing';

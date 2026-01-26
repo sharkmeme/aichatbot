@@ -3,10 +3,10 @@ import { validateChatRequest, sanitizeInput } from '../middleware/validation';
 import { sessionRateLimiter } from '../middleware/rateLimiter';
 import { DatabaseService } from '../services/database.service';
 import { OpenAIService } from '../services/openai.service';
-import { IntentService } from '../services/intent.service';
+import { IntentService, ConversationTopic } from '../services/intent.service';
 import { PricingResponderService } from '../services/pricing-responder.service';
 import { ChatRequest, ChatResponse, Lead } from '../types';
-import { getAllValidPrices } from '../data/pricing';
+import { getAllValidPrices, PRICING_DATA } from '../data/pricing';
 
 const router = Router();
 const dbService = new DatabaseService();
@@ -15,7 +15,67 @@ const intentService = new IntentService();
 const pricingResponder = new PricingResponderService();
 
 /**
+ * Get valid prices scoped to a specific topic (division or package)
+ * Used for topic-scoped price hallucination guard
+ */
+function getTopicScopedPrices(topic: ConversationTopic): number[] {
+  const prices: number[] = [];
+
+  if (topic.package && topic.division) {
+    // Specific package - only allow that package's prices
+    const division = PRICING_DATA[topic.division];
+    if (division) {
+      const pkg = division.packages.find(p => p.id === topic.package);
+      if (pkg && typeof pkg.price === 'number') {
+        prices.push(pkg.price);
+        // Add optional support price if exists
+        if (pkg.optional_support && typeof pkg.optional_support.price === 'number') {
+          prices.push(pkg.optional_support.price);
+        }
+      }
+    }
+  } else if (topic.division) {
+    // Division only - allow all prices in that division
+    const division = PRICING_DATA[topic.division];
+    if (division) {
+      division.packages.forEach(pkg => {
+        if (typeof pkg.price === 'number') {
+          prices.push(pkg.price);
+        }
+        if (pkg.optional_support && typeof pkg.optional_support.price === 'number') {
+          prices.push(pkg.optional_support.price);
+        }
+      });
+    }
+  }
+
+  return prices;
+}
+
+/**
+ * Detect if user is selecting a contact method
+ */
+function detectContactMethodSelection(message: string): string | null {
+  const normalized = message.toLowerCase().trim();
+
+  // Exact matches (high confidence)
+  if (/^(telegram|whatsapp|meeting|contact form|call|phone)$/i.test(normalized)) {
+    return normalized;
+  }
+
+  // Pattern matches
+  if (/\b(telegram|tg)\b/i.test(normalized)) return 'telegram';
+  if (/\bwhatsapp\b/i.test(normalized)) return 'whatsapp';
+  if (/\b(meeting|zoom|calendar|schedule)\b/i.test(normalized)) return 'meeting';
+  if (/\b(form|email|contact form)\b/i.test(normalized)) return 'contact_form';
+  if (/\b(call|phone)\b/i.test(normalized)) return 'call';
+
+  return null;
+}
+
+/**
  * Generate or enhance lead data from topic and existing lead
+ * Also auto-sets budget_range for fixed-price packages
  */
 function enhanceLeadFromTopic(
   lead: Lead | null,
@@ -40,6 +100,34 @@ function enhanceLeadFromTopic(
       enhanced.interest_area = topic.package;
     } else if (topic.division) {
       enhanced.interest_area = topic.division;
+    }
+  }
+
+  // Auto-set budget_range for fixed-price packages
+  if (!enhanced.budget_range && topic.package && topic.division) {
+    const division = PRICING_DATA[topic.division];
+    if (division) {
+      const pkg = division.packages.find(p => p.id === topic.package);
+      if (pkg && typeof pkg.price === 'number') {
+        // For VIP packages and one-time offers, use exact price
+        if (pkg.price < 200 || pkg.recurring === 'one-time') {
+          const priceStr = pkg.recurring === 'monthly'
+            ? `$${pkg.price}/month`
+            : `$${pkg.price} (one-time)`;
+          enhanced.budget_range = priceStr;
+        } else {
+          // For larger packages, use range
+          if (pkg.price < 1000) {
+            enhanced.budget_range = '$500-1K';
+          } else if (pkg.price < 2000) {
+            enhanced.budget_range = '$1K-2K';
+          } else if (pkg.price < 4000) {
+            enhanced.budget_range = '$2K-5K';
+          } else {
+            enhanced.budget_range = '$5K+';
+          }
+        }
+      }
     }
   }
 
@@ -97,8 +185,24 @@ router.post(
       let reply: string;
       let lead: Lead | null = null;
 
+      // Check for contact method selection (high priority)
+      const selectedContact = detectContactMethodSelection(sanitizedMessage);
+      if (selectedContact && existingLead && (existingLead.name || existingLead.email)) {
+        // User is selecting how to continue after qualification
+        console.log('[Chat] ✓ DETERMINISTIC CONTACT METHOD SELECTION');
+        const buttonMap: Record<string, string> = {
+          'telegram': '{{BTN_TELEGRAM}}',
+          'whatsapp': '{{BTN_WHATSAPP}}',
+          'meeting': '{{BTN_MEETING}}',
+          'contact_form': '{{BTN_CONTACT_FORM}}',
+          'call': '{{BTN_CALL_US}}'
+        };
+        reply = `Tap ${selectedContact.charAt(0).toUpperCase() + selectedContact.slice(1)} below.\n\n${buttonMap[selectedContact]}`;
+        lead = enhanceLeadFromTopic(null, topic, existingLead);
+        lead.preferred_contact_channel = selectedContact;
+      }
       // Route based on intent
-      if (intent === 'pricing') {
+      else if (intent === 'pricing') {
         // Deterministic pricing response (NO LLM)
         console.log('[Chat] ✓ DETERMINISTIC PRICING PATH (no LLM call)');
         const response = pricingResponder.generatePricingResponse(topic);
@@ -157,7 +261,25 @@ router.post(
         reply = response.reply;
         lead = response.lead;
       } else {
-        // General query - use LLM with knowledge base
+        // CRM Disambiguation: if topic is identified but intent is general, ask clarifying question
+        if (topic.package && !hasPricingIntent(sanitizedMessage)) {
+          console.log('[Chat] ✓ DETERMINISTIC DISAMBIGUATION (topic identified but no pricing intent)');
+          const division = topic.division ? PRICING_DATA[topic.division] : null;
+          const pkg = division?.packages.find(p => p.id === topic.package);
+          if (pkg) {
+            reply = `${pkg.name} helps with ${getPackageShortDescription(topic.package)}. Do you want pricing or what's included?`;
+            lead = enhanceLeadFromTopic(null, topic, existingLead);
+          } else {
+            // Fallback to LLM
+            reply = await handleLLMPath();
+          }
+        } else {
+          // General query - use LLM with knowledge base
+          reply = await handleLLMPath();
+        }
+      }
+
+      async function handleLLMPath(): Promise<string> {
         console.log('[Chat] → LLM PATH (general query)');
         const llmResponse = await openaiService.generateChatCompletion(
           recentMessages,
@@ -165,32 +287,79 @@ router.post(
           existingLead,
           topic // Pass topic for context
         );
-        reply = llmResponse.reply;
+        let llmReply = llmResponse.reply;
         lead = llmResponse.lead;
 
-        // Price hallucination guard
-        const validPrices = getAllValidPrices();
+        // Topic-scoped price hallucination guard
         const pricePattern = /\$(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)/g;
         const mentionedPrices: number[] = [];
         let match;
 
-        while ((match = pricePattern.exec(reply)) !== null) {
+        while ((match = pricePattern.exec(llmReply)) !== null) {
           const priceStr = match[1].replace(/,/g, '');
           const price = parseInt(priceStr, 10);
           mentionedPrices.push(price);
         }
 
-        // Check if LLM hallucinated prices
-        const hallucinatedPrices = mentionedPrices.filter(p => !validPrices.includes(p));
-        if (hallucinatedPrices.length > 0) {
-          console.error('[Chat] ⚠️  PRICE HALLUCINATION DETECTED! Invalid prices:', hallucinatedPrices);
-          console.error('[Chat] ⚠️  Blocking response and using safe fallback');
-          reply = "I can share exact package pricing—which division interests you: Studios / Bunny Code / Honey Software / VIP?";
-          // Keep the lead data from LLM if present
+        // If LLM mentioned prices, validate against topic-scoped prices
+        if (mentionedPrices.length > 0) {
+          let validPrices: number[];
+
+          if (topic.package || topic.division) {
+            // Use topic-scoped validation
+            validPrices = getTopicScopedPrices(topic);
+            console.log('[Chat] Topic-scoped price validation:', validPrices);
+          } else {
+            // No topic identified, use global validation
+            validPrices = getAllValidPrices();
+            console.log('[Chat] Global price validation (no topic)');
+          }
+
+          // Check if LLM hallucinated prices
+          const hallucinatedPrices = mentionedPrices.filter(p => !validPrices.includes(p));
+          if (hallucinatedPrices.length > 0) {
+            console.error('[Chat] ⚠️  PRICE HALLUCINATION DETECTED! Invalid prices:', hallucinatedPrices);
+            console.error('[Chat] ⚠️  Topic:', JSON.stringify(topic));
+            console.error('[Chat] ⚠️  Valid prices for topic:', validPrices);
+
+            // Use deterministic pricing response for the resolved topic
+            if (topic.package || topic.division) {
+              console.error('[Chat] ⚠️  Replacing with deterministic pricing for topic');
+              const pricingResponse = pricingResponder.generatePricingResponse(topic);
+              llmReply = pricingResponse.reply;
+              lead = pricingResponse.lead;
+            } else {
+              console.error('[Chat] ⚠️  No topic - using safe fallback');
+              llmReply = "I can share exact package pricing—which division interests you: Studios / Bunny Code / Honey Software / VIP?";
+            }
+          }
         }
 
         // Enhance lead with server-side topic tracking
         lead = enhanceLeadFromTopic(lead, topic, existingLead);
+
+        return llmReply;
+      }
+
+      function hasPricingIntent(message: string): boolean {
+        return /\b(price|pricing|cost|how much|ow much|much for|\$|rate|fee)\b/i.test(message);
+      }
+
+      function getPackageShortDescription(packageId: string): string {
+        const descriptions: Record<string, string> = {
+          'lead-intake-crm': 'lead intake and CRM automation',
+          'ai-outreach': 'AI-powered outreach and follow-up',
+          'support-ticket': 'support ticket automation',
+          'chat-assistant': 'website chat assistance',
+          'phone-support': 'phone support automation',
+          'masterminds': 'group coaching and community',
+          'fast-track': '1-on-1 coaching and fast-track support',
+          'starter': 'monthly video content creation',
+          'growth': 'scaled content production',
+          'content-engine': 'full content automation',
+          'studio-partner': 'comprehensive video partnership'
+        };
+        return descriptions[packageId] || 'business automation';
       }
 
       // Ensure lead always has a value (server-side generation)
