@@ -199,11 +199,13 @@ function detectContactMethodSelection(message: string): string | null {
 /**
  * Generate or enhance lead data from topic and existing lead
  * Also auto-sets budget_range for fixed-price packages
+ * @param showsInterest - Only set interest_area/notes if user showed actual interest (pricing/inclusions/buy intent)
  */
 function enhanceLeadFromTopic(
   lead: Lead | null,
   topic: { division?: string; package?: string },
-  existingLead: Lead | null
+  existingLead: Lead | null,
+  showsInterest: boolean = true
 ): Lead {
   const enhanced: Lead = {
     name: lead?.name || existingLead?.name,
@@ -217,8 +219,8 @@ function enhanceLeadFromTopic(
     notes: lead?.notes || existingLead?.notes
   };
 
-  // Auto-set interest_area from topic if not already set
-  if (!enhanced.interest_area && (topic.package || topic.division)) {
+  // Only auto-set interest_area from topic if user shows actual interest
+  if (showsInterest && !enhanced.interest_area && (topic.package || topic.division)) {
     if (topic.package) {
       enhanced.interest_area = topic.package;
     } else if (topic.division) {
@@ -226,8 +228,8 @@ function enhanceLeadFromTopic(
     }
   }
 
-  // Auto-set budget_range for fixed-price packages (normalized categories)
-  if (!enhanced.budget_range && topic.package && topic.division) {
+  // Only auto-set budget_range and notes if user shows actual interest
+  if (showsInterest && !enhanced.budget_range && topic.package && topic.division) {
     const division = PRICING_DATA[topic.division];
     if (division) {
       const pkg = division.packages.find(p => p.id === topic.package);
@@ -414,6 +416,14 @@ router.post(
             pendingResolved = true;
             // No more pending field
 
+          } else if (/^(ok|okay|thanks|thank you|got it|sounds good|perfect|great|cool)$/i.test(sanitizedMessage.trim())) {
+            // Acknowledgement - don't re-show buttons, just ask if they have questions
+            console.log('[LeadFlow] ✅ User acknowledged contact options - clearing pending state');
+            reply = "Any other questions I can help with?";
+            pendingResolved = true;
+            // Clear pending field but keep lead
+            lead = enhanceLeadFromTopic(null, {}, existingLead);
+
           } else {
             // User asked something else - clear pending and answer normally
             console.log('[LeadFlow] ⚠️  User asked different question while contact_choice pending - clearing state, answering question');
@@ -442,7 +452,7 @@ router.post(
           choice = 'pricing';
         } else if (/^(included|inclusions|features|what'?s included)$/i.test(normalized) || /\b(included|inclusions|features)\b/i.test(normalized)) {
           choice = 'inclusions';
-        } else if (/\b(both|all|everything)\b/i.test(normalized)) {
+        } else if (/\b(both|all|everything|info to both)\b/i.test(normalized)) {
           choice = 'both';
         } else if (/^(no|cancel|skip|nevermind)$/i.test(normalized)) {
           choice = 'cancel';
@@ -454,7 +464,28 @@ router.post(
         if (choice && choice !== 'cancel') {
           console.log('[Chat] ✓ RESOLVING PENDING QUESTION:', choice);
 
-          if (choice === 'pricing' || choice === 'both') {
+          // Special handling for VIP division "both" - show BOTH packages
+          if (choice === 'both' && pendingQuestion.topic.division === 'vip') {
+            console.log('[Chat] VIP "both" detected - showing both Masterminds AND Fast Track');
+            const division = PRICING_DATA['vip'];
+
+            if (division) {
+              const packages = division.packages;
+              const responses: string[] = [];
+
+              // Generate response for each VIP package
+              for (const pkg of packages) {
+                const pkgTopic = { division: 'vip', package: pkg.id };
+                const pricingResp = pricingResponder.generatePricingResponse(pkgTopic);
+                const inclusionsResp = pricingResponder.generateInclusionsResponse(pkgTopic, false);
+
+                responses.push(`**${pkg.name}**\n${pricingResp.reply}\n\n**What's included:**\n${inclusionsResp.reply}`);
+              }
+
+              reply = responses.join('\n\n---\n\n');
+              lead = enhanceLeadFromTopic(null, pendingQuestion.topic, existingLead, true); // User is showing interest
+            }
+          } else if (choice === 'pricing' || choice === 'both') {
             const response = pricingResponder.generatePricingResponse(pendingQuestion.topic);
             reply = response.reply;
             lead = response.lead;
@@ -474,6 +505,30 @@ router.post(
         } else if (choice === 'cancel') {
           console.log('[Chat] ⚠️  User canceled pending question or asked new question');
           // Fall through to normal routing
+        }
+      }
+
+      // PRIORITY 2.5: Handle "and the other" for VIP packages
+      if (!pendingResolved && /\b(and |what about )?(the )?(other|another)( one| package)?\b/i.test(sanitizedMessage)) {
+        // Check if we have VIP context from recent messages
+        const lastTopic = intentService.getLastTopic(recentMessages);
+
+        if (lastTopic.division === 'vip' && lastTopic.package) {
+          console.log('[Chat] "and the other" detected in VIP context - switching package');
+
+          // Get the other VIP package
+          const otherPackages = intentService.getOtherPackages(lastTopic);
+          if (otherPackages.length > 0) {
+            const otherTopic = otherPackages[0]; // VIP only has 2 packages
+            const pricingResp = pricingResponder.generatePricingResponse(otherTopic);
+            const inclusionsResp = pricingResponder.generateInclusionsResponse(otherTopic, false);
+
+            reply = `${pricingResp.reply}\n\n**What's included:**\n${inclusionsResp.reply}`;
+            lead = pricingResp.lead || inclusionsResp.lead;
+            topic = otherTopic;
+            metadata.intent = 'pricing';
+            pendingResolved = true;
+          }
         }
       }
 
@@ -593,8 +648,11 @@ router.post(
         }
 
         // If user is qualified and asked a question during contact choice, re-append buttons
+        // BUT: don't re-append if they just acknowledged with "ok/thanks"
+        const isAcknowledgement = /^(ok|okay|thanks|thank you|got it|sounds good|perfect|great|cool)$/i.test(sanitizedMessage.trim());
         if (pendingLeadField === 'contact_choice' &&
             !reply.includes('{{BTN_') &&
+            !isAcknowledgement &&
             existingLead && existingLead.name && existingLead.email) {
           console.log('[Chat] ℹ️  Re-appending contact buttons after answering question');
           reply += '\n\nHow would you like to move forward?\n\n{{BTN_MEETING}}\n{{BTN_WHATSAPP}}\n{{BTN_TELEGRAM}}\n{{BTN_CONTACT_FORM}}\n{{BTN_CALL_US}}';
@@ -602,15 +660,19 @@ router.post(
         }
 
         // Enhance lead with server-side topic tracking
+        // Only mark as interested if intent is pricing/inclusions/buy
+        const showsInterest = intent ? ['pricing', 'inclusions', 'buy', 'budget_confirmation'].includes(intent) : false;
         if (lead) {
-          lead = enhanceLeadFromTopic(lead, topic, existingLead);
+          lead = enhanceLeadFromTopic(lead, topic, existingLead, showsInterest);
         }
       }
 
       // Ensure lead always has a value (server-side generation)
       if (!lead) {
         console.log('[Chat] Generating lead from topic and existing data');
-        lead = enhanceLeadFromTopic(null, topic, existingLead);
+        // For lead generation without explicit lead data, don't mark as interested unless we have strong intent
+        const showsInterest = intent ? ['pricing', 'inclusions', 'buy', 'budget_confirmation'].includes(intent) : false;
+        lead = enhanceLeadFromTopic(null, topic, existingLead, showsInterest);
       }
 
       console.log('[Chat] AI response generated');

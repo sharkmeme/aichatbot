@@ -248,6 +248,9 @@ export class IntentService {
     const normalized = message.toLowerCase();
     const topic: ConversationTopic = {};
 
+    // Check if message has intent keywords (pricing, inclusions, features, etc.)
+    const hasIntentKeywords = this.hasIntentKeywords(normalized);
+
     // "and for X?" pattern - topic switch
     // If last intent was pricing, this likely means "and for X pricing?"
     const andForMatch = /\b(and|what about) (for |about )?(the )?(crm|outreach|ticket|chatbot|chat|phone|lead)/i.exec(normalized);
@@ -285,7 +288,7 @@ export class IntentService {
       return topic;
     }
 
-    // Division detection
+    // Division detection (only set if confidence is reasonable)
     if (/\b(studios?|video production|content creation|ai video)\b/i.test(normalized)) {
       topic.division = 'studios';
     } else if (/\b(vip|club|coaching|workshop)\b/i.test(normalized)) {
@@ -297,11 +300,21 @@ export class IntentService {
     }
 
     // Package detection with fuzzy matching and aliases
+    // ONLY apply if message has intent keywords OR match is very high confidence
     const packageMatch = this.detectPackageFromAliases(normalized);
     if (packageMatch) {
-      topic.package = packageMatch.packageId;
-      topic.division = packageMatch.division;
-      console.log('[Intent] Package detected via alias/fuzzy match:', packageMatch.packageId, 'confidence:', packageMatch.confidence);
+      // Apply stricter thresholds:
+      // - Package match requires >0.80 confidence (without keywords) OR >=0.60 (with keywords)
+      // - This prevents "chat" in generic "tell me about chat" from matching
+      const packageThreshold = hasIntentKeywords ? 0.60 : 0.81;
+
+      if (packageMatch.confidence >= packageThreshold) {
+        topic.package = packageMatch.packageId;
+        topic.division = packageMatch.division;
+        console.log('[Intent] Package detected via alias/fuzzy match:', packageMatch.packageId, 'confidence:', packageMatch.confidence, 'hasIntentKeywords:', hasIntentKeywords);
+      } else {
+        console.log('[Intent] Package match confidence too low:', packageMatch.packageId, 'confidence:', packageMatch.confidence, 'threshold:', packageThreshold, '- NOT setting topic');
+      }
     }
 
     // If no topic found in current message and message is vague, check recent messages
@@ -314,6 +327,23 @@ export class IntentService {
     }
 
     return topic;
+  }
+
+  /**
+   * Check if message has pricing/inclusions/feature intent keywords
+   * Used to determine if fuzzy package matching should be more lenient
+   */
+  private hasIntentKeywords(message: string): boolean {
+    const intentKeywords = [
+      'price', 'pricing', 'cost', 'how much', 'ow much', 'much for',
+      'included', 'includes', 'features', 'what do i get',
+      'package', 'packages', 'plan', 'plans',
+      'rate', 'fee', 'monthly', 'per month',
+      'buy', 'purchase', 'get', 'sign up'
+    ];
+
+    const normalized = message.toLowerCase();
+    return intentKeywords.some(keyword => normalized.includes(keyword));
   }
 
   /**
@@ -345,6 +375,7 @@ export class IntentService {
   /**
    * Get the last discussed topic from conversation history
    * Looks at recent bot messages to see what was discussed
+   * Uses more lenient matching since these are from known-good bot messages
    */
   getLastTopic(messages: Message[]): ConversationTopic {
     const topic: ConversationTopic = {};
@@ -355,15 +386,26 @@ export class IntentService {
     // Start from most recent and work backwards
     for (let i = recentMessages.length - 1; i >= 0; i--) {
       const msg = recentMessages[i];
-      const extracted = this.extractTopic(msg.content, []);
+      const normalized = msg.content.toLowerCase();
 
+      // For bot messages, use more lenient matching
+      // Try to find package names with lower confidence threshold
+      const packageMatch = this.detectPackageFromAliases(normalized);
+      if (packageMatch && packageMatch.confidence >= 0.50) { // Lower threshold for context extraction
+        topic.package = packageMatch.packageId;
+        topic.division = packageMatch.division;
+        console.log('[Intent] Extracted topic from history:', topic.package, 'confidence:', packageMatch.confidence);
+        break; // Found specific package, stop
+      }
+
+      // Also try standard extraction as fallback
+      const extracted = this.extractTopic(msg.content, []);
       if (extracted.package) {
         topic.package = extracted.package;
         topic.division = extracted.division;
-        break; // Found specific package, stop
+        break;
       } else if (extracted.division && !topic.division) {
         topic.division = extracted.division;
-        // Continue looking for package
       }
     }
 
@@ -417,8 +459,20 @@ export class IntentService {
     // First try exact alias matches (highest confidence)
     for (const [packageId, aliases] of Object.entries(PACKAGE_ALIASES)) {
       for (const alias of aliases) {
-        if (normalized.includes(alias)) {
-          const confidence = alias.length / normalized.length; // Longer match = higher confidence
+        // Check for word boundary match (not just substring)
+        const aliasPattern = new RegExp(`\\b${alias.replace(/\s+/g, '\\s+')}\\b`, 'i');
+        if (aliasPattern.test(normalized)) {
+          // For exact word boundary matches, give higher confidence
+          // Base confidence on ratio of alias to message, but boost short exact matches
+          let confidence: number;
+          if (alias.length <= 4) {
+            // Short matches (crm, chat, etc.) - boost confidence significantly
+            confidence = 0.80;
+          } else {
+            // Longer matches - use ratio with multiplier
+            confidence = Math.min(0.95, alias.length / normalized.length * 2.0);
+          }
+
           if (!bestMatch || confidence > bestMatch.confidence) {
             const division = this.getDivisionForPackage(packageId);
             if (division) {
@@ -429,8 +483,8 @@ export class IntentService {
       }
     }
 
-    // If exact match found with good confidence, return it
-    if (bestMatch && bestMatch.confidence > 0.3) {
+    // If exact match found with reasonable confidence, return it
+    if (bestMatch && bestMatch.confidence >= 0.50) {
       return bestMatch;
     }
 
@@ -443,9 +497,9 @@ export class IntentService {
           for (const aliasWord of aliasWords) {
             if (aliasWord.length < 4) continue;
 
-            const match = fuzzyMatch(word, [aliasWord], 0.75);
+            const match = fuzzyMatch(word, [aliasWord], 0.80); // Increased threshold from 0.75 to 0.80
             if (match) {
-              const confidence = match.score * 0.8; // Slightly lower confidence for fuzzy
+              const confidence = match.score * 0.70; // Reduced from 0.75 for more conservative fuzzy matches
               if (!bestMatch || confidence > bestMatch.confidence) {
                 const division = this.getDivisionForPackage(packageId);
                 if (division) {
@@ -458,7 +512,8 @@ export class IntentService {
       }
     }
 
-    return bestMatch && bestMatch.confidence > 0.5 ? bestMatch : null;
+    // Only return if confidence meets minimum threshold (0.55)
+    return bestMatch && bestMatch.confidence >= 0.55 ? bestMatch : null;
   }
 
   /**
