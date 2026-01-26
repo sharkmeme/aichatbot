@@ -17,15 +17,15 @@ export class PricingResponderService {
 
     let reply = '';
     const lead: Lead = {
-      name: null,
-      email: null,
-      phone: null,
-      business_type: null,
-      company_name: null,
-      interest_area: null,
-      budget_range: null,
-      preferred_contact_channel: null,
-      notes: null
+      name: undefined,
+      email: undefined,
+      phone: undefined,
+      business_type: undefined,
+      company_name: undefined,
+      interest_area: undefined,
+      budget_range: undefined,
+      preferred_contact_channel: undefined,
+      notes: undefined
     };
 
     // Specific package requested
@@ -64,15 +64,15 @@ export class PricingResponderService {
 
     let reply = '';
     const lead: Lead = {
-      name: null,
-      email: null,
-      phone: null,
-      business_type: null,
-      company_name: null,
-      interest_area: null,
-      budget_range: null,
-      preferred_contact_channel: null,
-      notes: null
+      name: undefined,
+      email: undefined,
+      phone: undefined,
+      business_type: undefined,
+      company_name: undefined,
+      interest_area: undefined,
+      budget_range: undefined,
+      preferred_contact_channel: undefined,
+      notes: undefined
     };
 
     // Specific package requested
@@ -188,7 +188,7 @@ export class PricingResponderService {
   /**
    * Estimate budget range based on package price
    */
-  private estimateBudgetRange(pkg: Package): string | null {
+  private estimateBudgetRange(pkg: Package): string | undefined {
     if (pkg.price === 'custom') {
       return 'custom';
     }
@@ -207,6 +207,6 @@ export class PricingResponderService {
       }
     }
 
-    return null;
+    return undefined;
   }
 }

@@ -116,15 +116,15 @@ router.post(
       if (!lead) {
         console.log('[Chat] ⚠️  No LEAD_JSON - generating default');
         lead = {
-          name: null,
-          email: null,
-          phone: null,
-          business_type: null,
-          company_name: null,
-          interest_area: null,
-          budget_range: null,
-          preferred_contact_channel: null,
-          notes: null
+          name: undefined,
+          email: undefined,
+          phone: undefined,
+          business_type: undefined,
+          company_name: undefined,
+          interest_area: undefined,
+          budget_range: undefined,
+          preferred_contact_channel: undefined,
+          notes: undefined
         };
       }
 
