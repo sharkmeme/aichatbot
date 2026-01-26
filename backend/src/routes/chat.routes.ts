@@ -445,7 +445,7 @@ router.post(
           }
         }
         // Handle buy intent
-        if (intent === 'buy') {
+        else if (intent === 'buy') {
           console.log('[Chat] ✓ BUY INTENT DETECTED - Starting lead capture');
           // Start lead qualification flow
           lead = enhanceLeadFromTopic(null, topic, existingLead);
