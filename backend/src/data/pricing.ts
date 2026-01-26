@@ -36,11 +36,11 @@ export const PRICING_DATA: Record<string, Division> = {
         price: 500,
         recurring: 'monthly',
         inclusions: [
-          '10 videos per month',
-          '1–2 min runtime',
-          'AI voiceovers + visuals',
-          'Basic editing'
-        ]
+          'Up to 5 AI videos/month (up to 8 min total runtime)',
+          'Shared creative direction (no custom brand system)',
+          'Multiple formats (ads/shorts/visuals)',
+          'Delivery in 5–7 days',
+        ],
       },
       {
         id: 'growth',
@@ -48,29 +48,28 @@ export const PRICING_DATA: Record<string, Division> = {
         price: 1500,
         recurring: 'monthly',
         inclusions: [
-          '30 videos per month',
-          '2–5 min runtime',
-          'Advanced editing + effects',
-          'Thumbnail design'
-        ]
+          'Up to 45 min total runtime',
+          'Up to 25 AI videos (short or long)',
+          'Brand-specific visual style',
+          'Dedicated content manager + priority delivery',
+        ],
       },
       {
         id: 'content-engine',
         name: 'Content Engine',
         price: 3500,
-        recurring: 'monthly',
+        recurring: 'one-time',
         optional_support: {
           price: 1000,
           recurring: 'monthly',
-          description: 'Content management + performance reports'
+          description: 'Active Optimization & Support Retainer (optional)',
         },
         inclusions: [
-          '100+ videos per month',
-          '2–10 min runtime',
-          'Full production pipeline',
-          'Multi-platform optimization',
-          'Dedicated account manager'
-        ]
+          'Complete custom pipeline build (architecture + integration)',
+          'Prompt engineering + brand voice tuning',
+          'Client-owned API keys (direct billing)',
+          'Team handover/training + auto-posting integrations',
+        ],
       },
       {
         id: 'studio-partner',
@@ -78,13 +77,13 @@ export const PRICING_DATA: Record<string, Division> = {
         price: 'custom',
         recurring: 'monthly',
         inclusions: [
-          'Custom video volume',
-          'White-label options',
-          'Priority support',
-          'Custom workflows'
-        ]
-      }
-    ]
+          'Dedicated AI studio team + unlimited production scope',
+          'Custom workflows & pipelines',
+          'Brand IP & style system ownership',
+          'Optional white-label production',
+        ],
+      },
+    ],
   },
 
   vip: {
@@ -97,10 +96,11 @@ export const PRICING_DATA: Record<string, Division> = {
         price: 49,
         recurring: 'monthly',
         inclusions: [
-          'Tutorials, prompt libraries, community',
           'Access to all workshops & trainings',
-          'Monthly group Q&A calls'
-        ]
+          'Step-by-step tutorials (AI tools, systems, workflows)',
+          'Prompt libraries + practical frameworks',
+          'Private community + new content added regularly',
+        ],
       },
       {
         id: 'fast-track',
@@ -109,12 +109,12 @@ export const PRICING_DATA: Record<string, Division> = {
         recurring: 'monthly',
         inclusions: [
           'Weekly 1:1 coaching sessions',
-          'Personal AI strategy consultation',
-          'Priority access to new tools',
-          'Everything in Masterminds'
-        ]
-      }
-    ]
+          'Personalized execution plans',
+          'Direct feedback on systems/offers/strategies',
+          'Private communication channel',
+        ],
+      },
+    ],
   },
 
   code: {
@@ -129,14 +129,14 @@ export const PRICING_DATA: Record<string, Division> = {
         optional_support: {
           price: 299,
           recurring: 'monthly',
-          description: 'Updates, tweaks, and support'
+          description: 'Active Optimization & Support (optional)',
         },
         inclusions: [
-          'Multi-source lead capture (forms, ads, landing pages)',
-          'Automated lead scoring',
-          'CRM sync (HubSpot, Pipedrive, etc.)',
-          'Lead routing to sales team'
-        ]
+          'Lead capture from forms/ads/landing pages',
+          'CRM creation & enrichment + lead scoring rules',
+          'Team notifications (Slack/Email)',
+          'Basic follow-up trigger',
+        ],
       },
       {
         id: 'ai-outreach',
@@ -146,14 +146,14 @@ export const PRICING_DATA: Record<string, Division> = {
         optional_support: {
           price: 550,
           recurring: 'monthly',
-          description: 'Campaign management + optimization'
+          description: 'Active Optimization & Support (optional)',
         },
         inclusions: [
-          'Personalized cold email sequences',
-          'LinkedIn outreach automation',
-          'AI-powered reply detection',
-          'Follow-up scheduling based on engagement'
-        ]
+          'AI-generated personalized messages + multi-step follow-ups',
+          'Reply detection & routing',
+          'CRM updates',
+          'Stop rules to avoid spam',
+        ],
       },
       {
         id: 'support-ticket',
@@ -163,14 +163,14 @@ export const PRICING_DATA: Record<string, Division> = {
         optional_support: {
           price: 299,
           recurring: 'monthly',
-          description: 'Updates and support'
+          description: 'Active Optimization & Support (optional)',
         },
         inclusions: [
-          'Email-to-ticket automation',
-          'Smart routing by priority',
-          'Category detection',
-          'Auto-responses for common issues'
-        ]
+          'Ticket creation from email/forms/chat',
+          'Priority + category detection',
+          'Assignment based on rules',
+          'Notifications + status syncing',
+        ],
       },
       {
         id: 'chat-assistant',
@@ -180,14 +180,14 @@ export const PRICING_DATA: Record<string, Division> = {
         optional_support: {
           price: 550,
           recurring: 'monthly',
-          description: 'Updates, training, and support'
+          description: 'Active Optimization & Support (optional)',
         },
         inclusions: [
-          'Website chatbot integration',
-          'Multi-platform support (Telegram, WhatsApp, Instagram)',
-          'FAQ automation + lead qualification',
-          'CRM integration'
-        ]
+          'Website/Telegram/WhatsApp/Instagram chatbot',
+          'Trained on your FAQs/services/docs',
+          'Lead capture + qualification',
+          'Human handoff + 24/7 coverage',
+        ],
       },
       {
         id: 'phone-support',
@@ -197,18 +197,19 @@ export const PRICING_DATA: Record<string, Division> = {
         optional_support: {
           price: 850,
           recurring: 'monthly',
-          description: 'Voice model updates and support'
+          description: 'Active Optimization & Support (optional)',
         },
         inclusions: [
-          'AI voice assistant setup',
-          'Call routing logic',
-          'Call summaries + transcription',
-          'Automated CRM updates from calls'
-        ]
-      }
-    ]
-  }
+          'AI phone assistant + custom call flow',
+          'Voice-based FAQ/service handling',
+          'Call routing',
+          'Call summaries + CRM updates',
+        ],
+      },
+    ],
+  },
 };
+
 
 /**
  * Find a package by ID across all divisions
