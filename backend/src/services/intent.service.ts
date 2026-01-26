@@ -1,12 +1,22 @@
 import { Message } from '../types';
 import { PRICING_DATA } from '../data/pricing';
 
-export type Intent = 'pricing' | 'inclusions' | 'budget_confirmation' | 'definition' | 'billing_cadence' | 'general';
+export type Intent = 'pricing' | 'inclusions' | 'budget_confirmation' | 'definition' | 'billing_cadence' | 'buy' | 'disambiguation_resolution' | 'general';
 
 export interface ConversationTopic {
   division?: string; // studios, vip, code, software
   package?: string;  // starter, growth, masterminds, etc
 }
+
+export interface PendingDisambiguation {
+  topic: ConversationTopic;
+  askedAt: Date;
+}
+
+/**
+ * Disambiguation resolution type
+ */
+export type DisambiguationChoice = 'pricing' | 'inclusions' | 'both';
 
 /**
  * Intent Detection and Conversation Topic Tracking
@@ -17,9 +27,32 @@ export interface ConversationTopic {
 export class IntentService {
   /**
    * Detect the primary intent of a user message
+   * @param hasPendingDisambiguation - Whether there's a pending disambiguation question
    */
-  detectIntent(message: string): Intent {
+  detectIntent(message: string, hasPendingDisambiguation: boolean = false): Intent {
     const normalized = message.toLowerCase().trim();
+
+    // If pending disambiguation, check if this is a resolution
+    if (hasPendingDisambiguation) {
+      const resolution = this.detectDisambiguationResolution(normalized);
+      if (resolution !== null) {
+        return 'disambiguation_resolution';
+      }
+    }
+
+    // Buy intent (high priority - indicates readiness to purchase)
+    const buyPatterns = [
+      /^(buy|purchase|get (this|it|that)|sign up|interested|let'?s do it)$/i,
+      /\b(i'?ll|i will|i want to) (buy|purchase|get|sign up)\b/i,
+      /\b(want to|ready to) (buy|purchase|get it|sign up|proceed|move forward)\b/i,
+      /^(yes|yeah|yep),? (buy|purchase|interested|let'?s go)$/i
+    ];
+
+    for (const pattern of buyPatterns) {
+      if (pattern.test(normalized)) {
+        return 'buy';
+      }
+    }
 
     // Billing cadence questions (high priority - very specific)
     if (/\b(it'?s?|is (it|this|that)|are (they|these)) (a )?(monthly|month-to-month|subscription|recurring)\??$/i.test(normalized) ||
@@ -141,17 +174,54 @@ export class IntentService {
   }
 
   /**
+   * Detect disambiguation resolution choice
+   * Returns 'pricing', 'inclusions', 'both', or null if not a resolution
+   */
+  detectDisambiguationResolution(message: string): DisambiguationChoice | null {
+    const normalized = message.toLowerCase().trim();
+
+    // Explicit pricing choice
+    if (/^(price|pricing|cost|how much)\??$/i.test(normalized) ||
+        /\b(want|show|tell|give)( me)? (the )?(price|pricing|cost)\b/i.test(normalized)) {
+      return 'pricing';
+    }
+
+    // Explicit inclusions choice
+    if (/^(included|inclusions|features|what'?s included)\??$/i.test(normalized) ||
+        /\b(want|show|tell|give)( me)? (the )?(inclusions|features|what'?s included)\b/i.test(normalized)) {
+      return 'inclusions';
+    }
+
+    // Both
+    if (/^both$/i.test(normalized) || /\b(both|everything|all)\b/i.test(normalized)) {
+      return 'both';
+    }
+
+    // Yes = default to both (or pricing if last context was pricing)
+    if (/^(yes|yeah|yep|sure|ok|okay|please)$/i.test(normalized)) {
+      return 'both';
+    }
+
+    // No = ignore, treat as general
+    return null;
+  }
+
+  /**
    * Extract topic (division + package) from a message
    * Returns what division/package the user is asking about
+   * @param lastIntent - The last detected intent (for context)
    */
-  extractTopic(message: string, recentMessages: Message[] = []): ConversationTopic {
+  extractTopic(message: string, recentMessages: Message[] = [], lastIntent?: Intent): ConversationTopic {
     const normalized = message.toLowerCase();
     const topic: ConversationTopic = {};
 
     // "and for X?" pattern - topic switch
+    // If last intent was pricing, this likely means "and for X pricing?"
     const andForMatch = /\b(and|what about) (for |about )?(the )?(crm|outreach|ticket|chatbot|chat|phone|lead)/i.exec(normalized);
     if (andForMatch) {
       const keyword = andForMatch[4];
+      console.log('[Intent] "and for X?" pattern detected - keyword:', keyword, 'lastIntent:', lastIntent);
+
       if (/crm|lead/i.test(keyword)) {
         topic.package = 'lead-intake-crm';
         topic.division = 'code';
