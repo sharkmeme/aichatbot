@@ -126,6 +126,7 @@ export class OpenAIService {
       pendingLeadField?: string | null;
       pendingQuestion?: any | null;
       lastIntent?: string | null;
+      requestedPackages?: string[] | null;
     }
   ): Promise<{
     reply: string;

@@ -15,64 +15,59 @@ const intentService = new IntentService();
 const pricingResponder = new PricingResponderService();
 
 /**
+ * Get metadata from the most recent bot message
+ * Used to check current state without scanning history
+ */
+function getLastBotMetadata(recentMessages: Message[]): any | null {
+  // Look at messages from most recent backwards
+  for (let i = recentMessages.length - 1; i >= 0; i--) {
+    const msg = recentMessages[i];
+    if (msg.sender === 'bot' && msg.metadata) {
+      const metadata = typeof msg.metadata === 'string' ? JSON.parse(msg.metadata) : msg.metadata;
+      console.log('[State] Found last bot metadata:', JSON.stringify(metadata));
+      return metadata;
+    }
+  }
+  return null;
+}
+
+/**
  * Check if there's a pending lead field we're waiting for
- * Returns the pending field name if found
+ * ONLY reads from the most recent bot message (not last N)
  */
 function getPendingLeadField(recentMessages: Message[]): PendingLeadField | null {
-  // Check last bot message for pending lead field metadata
-  for (let i = recentMessages.length - 1; i >= 0; i--) {
-    const msg = recentMessages[i];
-    if (msg.sender === 'bot' && msg.metadata) {
-      const metadata = typeof msg.metadata === 'string' ? JSON.parse(msg.metadata) : msg.metadata;
-      if (metadata.pendingLeadField) {
-        console.log('[LeadFlow] 🔄 PENDING LEAD FIELD FOUND:', metadata.pendingLeadField);
-        return metadata.pendingLeadField as PendingLeadField;
-      }
-    }
-    // Only check last 3 messages (avoid old stale state)
-    if (i < recentMessages.length - 3) break;
+  const metadata = getLastBotMetadata(recentMessages);
+  if (metadata && metadata.pendingLeadField) {
+    console.log('[LeadFlow] 🔄 PENDING LEAD FIELD FOUND:', metadata.pendingLeadField);
+    return metadata.pendingLeadField as PendingLeadField;
   }
   return null;
 }
 
 /**
- * Check if there's a pending disambiguation question in recent messages
- * Returns the pending state if found
+ * Check if there's a pending disambiguation question
+ * ONLY reads from the most recent bot message (not last N)
  */
 function getPendingDisambiguation(recentMessages: Message[]): PendingDisambiguation | null {
-  // Check last bot message for pending disambiguation metadata
-  for (let i = recentMessages.length - 1; i >= 0; i--) {
-    const msg = recentMessages[i];
-    if (msg.sender === 'bot' && msg.metadata) {
-      const metadata = typeof msg.metadata === 'string' ? JSON.parse(msg.metadata) : msg.metadata;
-      if (metadata.pendingDisambiguation) {
-        console.log('[Chat] 🔄 PENDING DISAMBIGUATION STATE FOUND:', JSON.stringify(metadata.pendingDisambiguation));
-        return {
-          topic: metadata.pendingDisambiguation.topic,
-          askedAt: new Date(metadata.pendingDisambiguation.askedAt)
-        };
-      }
-    }
-    // Only check last few messages (avoid old stale state)
-    if (i < recentMessages.length - 6) break;
+  const metadata = getLastBotMetadata(recentMessages);
+  if (metadata && metadata.pendingDisambiguation) {
+    console.log('[Chat] 🔄 PENDING DISAMBIGUATION STATE FOUND:', JSON.stringify(metadata.pendingDisambiguation));
+    return {
+      topic: metadata.pendingDisambiguation.topic,
+      askedAt: new Date(metadata.pendingDisambiguation.askedAt)
+    };
   }
   return null;
 }
 
 /**
- * Get the last intent from recent messages
+ * Get the last intent from the most recent bot message
+ * ONLY reads from the most recent bot message (not last N)
  */
 function getLastIntent(recentMessages: Message[]): Intent | null {
-  for (let i = recentMessages.length - 1; i >= 0; i--) {
-    const msg = recentMessages[i];
-    if (msg.sender === 'bot' && msg.metadata) {
-      const metadata = typeof msg.metadata === 'string' ? JSON.parse(msg.metadata) : msg.metadata;
-      if (metadata.intent) {
-        return metadata.intent as Intent;
-      }
-    }
-    // Only check last 6 messages
-    if (i < recentMessages.length - 6) break;
+  const metadata = getLastBotMetadata(recentMessages);
+  if (metadata && metadata.intent) {
+    return metadata.intent as Intent;
   }
   return null;
 }
@@ -274,6 +269,25 @@ function detectContactMethodSelection(message: string): string | null {
 function detectProceedIntent(message: string): boolean {
   const normalized = message.toLowerCase().trim();
   return /\b(buy|purchase|get|start|join|proceed|sign up|let'?s go|i want|contact|telegram|whatsapp|meeting)\b/i.test(normalized);
+}
+
+/**
+ * Validate if user message contains budget signals
+ * Used to prevent LLM from hallucinating budget_range
+ */
+function hasBudgetSignals(message: string): boolean {
+  const normalized = message.toLowerCase().trim();
+  // Check for: $, digits with "k", "not sure", budget ranges like "$1-5K"
+  return /\$|budget|\d+k|\d{3,}|not sure|no budget|<\$|1-5k|5-20k|20k\+/i.test(normalized);
+}
+
+/**
+ * Validate if user message explicitly mentions contact channels
+ * Used to prevent LLM from hallucinating preferred_contact_channel
+ */
+function hasContactChannelMention(message: string): boolean {
+  const normalized = message.toLowerCase().trim();
+  return /\b(telegram|whatsapp|meeting|call|phone|contact form|email|zoom|calendar|schedule)\b/i.test(normalized);
 }
 
 /**
@@ -726,7 +740,8 @@ router.post(
             topic,
             pendingLeadField,
             pendingQuestion,
-            lastIntent: lastIntent || undefined
+            lastIntent: lastIntent || undefined,
+            requestedPackages: requestedPackages || undefined
           }
         );
 
@@ -847,7 +862,7 @@ router.post(
         }
 
         // If user is qualified and asked a question during contact choice
-        // Apply CTA cooldown to prevent spam
+        // Only re-show CTA if user explicitly expresses proceed intent (buy/start/meeting/etc)
         const isAcknowledgement = /^(ok|okay|thanks|thank you|got it|sounds good|perfect|great|cool)$/i.test(sanitizedMessage.trim());
         const userExpressesProceed = detectProceedIntent(sanitizedMessage);
 
@@ -856,18 +871,17 @@ router.post(
             !isAcknowledgement &&
             existingLead && existingLead.name && existingLead.email) {
 
-          // Check CTA cooldown
-          if (shouldShowCta(recentMessages, userExpressesProceed)) {
-            console.log('[Chat] ℹ️  Re-appending contact buttons after answering question');
+          // Only re-append CTA if user explicitly expresses proceed intent
+          if (userExpressesProceed) {
+            console.log('[Chat] ℹ️  User expressed proceed intent - re-appending contact buttons');
             reply += '\n\nHow would you like to move forward?\n\n{{BTN_MEETING}}\n{{BTN_WHATSAPP}}\n{{BTN_TELEGRAM}}\n{{BTN_CONTACT_FORM}}\n{{BTN_CALL_US}}';
             metadata.pendingLeadField = 'contact_choice';
             metadata.ctaShown = true;
             metadata.ctaShownAt = new Date().toISOString();
           } else {
-            // Cooldown active - just add a subtle reminder
-            console.log('[Chat] CTA cooldown active - adding subtle reminder');
-            reply += '\n\n_When you\'re ready, choose Meeting, WhatsApp, or Telegram._';
-            metadata.pendingLeadField = 'contact_choice'; // Keep pending
+            // User asked unrelated question - answer without CTA, clear pending
+            console.log('[Chat] User asked question during contact_choice - answering normally, clearing pending state');
+            // Don't set pendingLeadField, clearing it
           }
         }
 
@@ -888,6 +902,22 @@ router.post(
       }
 
       console.log('[Chat] AI response generated');
+
+      // Validate LEAD_JSON fields to prevent hallucination
+      if (lead) {
+        // Reject budget_range unless user message contains budget signals
+        if (lead.budget_range && !hasBudgetSignals(sanitizedMessage)) {
+          console.log('[Validation] ⚠️  Rejecting hallucinated budget_range:', lead.budget_range, '- no budget signals in user message');
+          lead.budget_range = undefined;
+        }
+
+        // Reject preferred_contact_channel unless user explicitly mentioned a channel
+        // Exception: Allow if pendingLeadField was 'contact_choice' (user was prompted to choose)
+        if (lead.preferred_contact_channel && !hasContactChannelMention(sanitizedMessage) && pendingLeadField !== 'contact_choice') {
+          console.log('[Validation] ⚠️  Rejecting hallucinated preferred_contact_channel:', lead.preferred_contact_channel, '- no channel mention in user message');
+          lead.preferred_contact_channel = undefined;
+        }
+      }
 
       // Upsert lead if we extracted lead data (non-blocking)
       let updatedLead = null;
