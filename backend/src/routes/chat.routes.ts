@@ -78,6 +78,26 @@ function getLastIntent(recentMessages: Message[]): Intent | null {
 }
 
 /**
+ * Get the last listed division packages from recent messages
+ * Returns division and package IDs if bot recently listed multiple packages
+ */
+function getLastListedDivisionPackages(recentMessages: Message[]): { division: string; packages: string[] } | null {
+  for (let i = recentMessages.length - 1; i >= 0; i--) {
+    const msg = recentMessages[i];
+    if (msg.sender === 'bot' && msg.metadata) {
+      const metadata = typeof msg.metadata === 'string' ? JSON.parse(msg.metadata) : msg.metadata;
+      if (metadata.listedDivisionPackages) {
+        console.log('[Chat] Found listed division packages in history:', JSON.stringify(metadata.listedDivisionPackages));
+        return metadata.listedDivisionPackages;
+      }
+    }
+    // Only check last 3 bot messages
+    if (i < recentMessages.length - 6) break;
+  }
+  return null;
+}
+
+/**
  * Validate email format
  */
 function isValidEmail(email: string): boolean {
@@ -541,6 +561,24 @@ router.post(
         console.log('[Chat] Intent hint:', intent, '| Topic hint:', JSON.stringify(topic));
         console.log('[Chat] Last Intent:', lastIntent);
 
+        // CRITICAL FIX: If user says "both/all/everything/compare" and we have a package-scoped topic,
+        // drop the package and keep division only. This prevents price guard from scoping to single package.
+        const wantsBothOrAll = /\b(both|all|everything|compare|info to both)\b/i.test(sanitizedMessage);
+        if (wantsBothOrAll) {
+          // Check if we recently listed multiple packages for a division
+          const listedPackages = getLastListedDivisionPackages(recentMessages);
+
+          if (listedPackages) {
+            // Use the division from the listing, not from topic hint
+            console.log('[Chat] 🔧 "both/all" detected with recent package listing - using division:', listedPackages.division);
+            topic = { division: listedPackages.division };
+          } else if (topic.package && topic.division) {
+            // Fallback: drop package from current topic
+            console.log('[Chat] 🔧 "both/all" detected - dropping package scope from topic:', topic.package, '→ division-only');
+            topic = { division: topic.division };
+          }
+        }
+
         metadata.intent = intent;
         // Use LLM with tools for natural conversation
         console.log('[Chat] → Using LLM with tool calling for response generation');
@@ -559,6 +597,12 @@ router.post(
 
         reply = llmResponse.reply;
         lead = llmResponse.lead || null;
+
+        // Store listed division packages metadata for "both" handling
+        if (llmResponse.toolContext?.listed_division_packages) {
+          metadata.listedDivisionPackages = llmResponse.toolContext.listed_division_packages;
+          console.log('[Chat] 💾 Stored listed division packages:', JSON.stringify(metadata.listedDivisionPackages));
+        }
 
         // Update state from LLM output
         if (llmResponse.stateUpdate) {

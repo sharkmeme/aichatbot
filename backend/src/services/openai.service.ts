@@ -131,7 +131,10 @@ export class OpenAIService {
     reply: string;
     lead: Lead | null;
     stateUpdate?: any;
-    toolContext?: { allowed_prices: number[] };
+    toolContext?: {
+      allowed_prices: number[];
+      listed_division_packages?: { division: string; packages: string[] } | null;
+    };
   }> {
     try {
       console.log('[LLM] Starting tool-calling chat completion');
@@ -219,6 +222,7 @@ Example STATE_JSON:
       let roundCount = 0;
       const MAX_ROUNDS = 3;
       const allAllowedPrices: number[] = [];
+      let listedDivisionPackages: { division: string; packages: string[] } | null = null;
 
       while (roundCount < MAX_ROUNDS) {
         roundCount++;
@@ -253,6 +257,15 @@ Example STATE_JSON:
             // Execute tool
             const toolResult = this.toolsService.executeTool(toolName, toolArgs);
 
+            // Track when list_division_packages is called - indicates multiple packages listed
+            if (toolName === 'list_division_packages' && toolArgs.division && toolResult?.packages) {
+              listedDivisionPackages = {
+                division: toolArgs.division,
+                packages: toolResult.packages.map((p: any) => p.id)
+              };
+              console.log('[LLM] 📋 Tracked division package listing:', listedDivisionPackages);
+            }
+
             // Collect allowed prices from tool results
             if (toolResult && toolResult.allowed_prices) {
               allAllowedPrices.push(...toolResult.allowed_prices);
@@ -281,7 +294,10 @@ Example STATE_JSON:
           reply,
           lead,
           stateUpdate,
-          toolContext: allAllowedPrices.length > 0 ? { allowed_prices: allAllowedPrices } : undefined
+          toolContext: {
+            allowed_prices: allAllowedPrices,
+            listed_division_packages: listedDivisionPackages
+          }
         };
       }
 
@@ -295,7 +311,10 @@ Example STATE_JSON:
         reply,
         lead,
         stateUpdate,
-        toolContext: allAllowedPrices.length > 0 ? { allowed_prices: allAllowedPrices } : undefined
+        toolContext: {
+          allowed_prices: allAllowedPrices,
+          listed_division_packages: listedDivisionPackages
+        }
       };
 
     } catch (error: any) {
