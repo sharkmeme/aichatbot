@@ -301,7 +301,7 @@ router.post(
       const pendingDisambiguation = getPendingDisambiguation(recentMessages);
       const lastIntent = getLastIntent(recentMessages);
 
-      let reply: string;
+      let reply: string = "I'm having trouble processing that. Could you rephrase your question?";
       let lead: Lead | null = null;
       let metadata: any = {}; // Track metadata
       let intent: Intent | null = null;
