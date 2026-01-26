@@ -98,6 +98,58 @@ function getLastListedDivisionPackages(recentMessages: Message[]): { division: s
 }
 
 /**
+ * Detect if user is requesting multiple packages (both, all, and the other)
+ * Returns requestedPackages array if detected
+ */
+function detectMultiPackageRequest(
+  message: string,
+  recentMessages: Message[]
+): { requestedPackages: string[]; division: string } | null {
+  const normalized = message.toLowerCase().trim();
+
+  // Detect multi-package keywords
+  const isMultiPackageRequest = /^(both|all|everything|both of them|all of them|compare them|info to both|info for both)$/i.test(normalized) ||
+                                /\b(both|all|everything|both of them|all of them)\b/i.test(normalized);
+
+  const isAndTheOther = /\b(and |what about )?(the )?(other|another)( one| package| tier)?\b/i.test(normalized);
+
+  if (!isMultiPackageRequest && !isAndTheOther) {
+    return null;
+  }
+
+  console.log('[MultiPackage] Detected multi-package request pattern:', normalized);
+
+  // Get recently listed packages
+  const listedPackages = getLastListedDivisionPackages(recentMessages);
+
+  if (listedPackages) {
+    if (isMultiPackageRequest) {
+      // "both/all" - return all packages
+      console.log('[MultiPackage] Returning ALL packages:', listedPackages.packages);
+      return {
+        requestedPackages: listedPackages.packages,
+        division: listedPackages.division
+      };
+    } else if (isAndTheOther) {
+      // "and the other" - find what was last discussed and return the other one(s)
+      const lastTopic = intentService.getLastTopic(recentMessages);
+      if (lastTopic.package) {
+        const otherPackages = listedPackages.packages.filter(p => p !== lastTopic.package);
+        if (otherPackages.length > 0) {
+          console.log('[MultiPackage] "and the other" - returning:', otherPackages);
+          return {
+            requestedPackages: otherPackages,
+            division: listedPackages.division
+          };
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
  * Validate email format
  */
 function isValidEmail(email: string): boolean {
@@ -214,6 +266,61 @@ function detectContactMethodSelection(message: string): string | null {
   if (/\b(call|phone)\b/i.test(normalized)) return 'call';
 
   return null;
+}
+
+/**
+ * Detect if user expresses proceed/buy intent
+ */
+function detectProceedIntent(message: string): boolean {
+  const normalized = message.toLowerCase().trim();
+  return /\b(buy|purchase|get|start|join|proceed|sign up|let'?s go|i want|contact|telegram|whatsapp|meeting)\b/i.test(normalized);
+}
+
+/**
+ * Get the last CTA shown message index
+ * Returns the message index and timestamp if found
+ */
+function getLastCtaShown(recentMessages: Message[]): { messageIndex: number; timestamp: Date } | null {
+  for (let i = recentMessages.length - 1; i >= 0; i--) {
+    const msg = recentMessages[i];
+    if (msg.sender === 'bot' && msg.metadata) {
+      const metadata = typeof msg.metadata === 'string' ? JSON.parse(msg.metadata) : msg.metadata;
+      if (metadata.ctaShown) {
+        return {
+          messageIndex: i,
+          timestamp: new Date(metadata.ctaShownAt || msg.created_at || new Date())
+        };
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Check if CTA should be shown based on cooldown
+ * Returns true if CTA can be shown
+ */
+function shouldShowCta(recentMessages: Message[], userExpressesProceed: boolean): boolean {
+  // Always show if user explicitly expresses proceed intent
+  if (userExpressesProceed) {
+    console.log('[CTA] User expressed proceed intent - CTA allowed');
+    return true;
+  }
+
+  // Check cooldown - don't show if CTA was shown in last 6 messages
+  const lastCta = getLastCtaShown(recentMessages);
+  if (lastCta) {
+    const messagesSinceLastCta = recentMessages.length - 1 - lastCta.messageIndex;
+    console.log('[CTA] Last CTA shown', messagesSinceLastCta, 'messages ago');
+
+    if (messagesSinceLastCta < 6) {
+      console.log('[CTA] Cooldown active - NOT showing CTA');
+      return false;
+    }
+  }
+
+  console.log('[CTA] No recent CTA or cooldown expired - CTA allowed');
+  return true;
 }
 
 /**
@@ -372,6 +479,8 @@ router.post(
             // Show contact options
             reply = "Great! How would you like to move forward?\n\n{{BTN_MEETING}}\n{{BTN_WHATSAPP}}\n{{BTN_TELEGRAM}}\n{{BTN_CONTACT_FORM}}\n{{BTN_CALL_US}}";
             metadata.pendingLeadField = 'contact_choice';
+            metadata.ctaShown = true;
+            metadata.ctaShownAt = new Date().toISOString();
             pendingResolved = true;
 
           } else {
@@ -554,38 +663,58 @@ router.post(
 
       // PRIORITY 3+: Normal intent/topic routing with LLM (only if pending wasn't resolved)
       if (!pendingResolved) {
-        // Detect intent and extract topic hint
-        console.log('[Chat] Step 4: Detect intent and extract topic hint...');
-        intent = intentService.detectIntent(sanitizedMessage, false);  // No disambiguation flag needed
-        topic = intentService.extractTopic(sanitizedMessage, recentMessages, lastIntent || undefined);
-        console.log('[Chat] Intent hint:', intent, '| Topic hint:', JSON.stringify(topic));
-        console.log('[Chat] Last Intent:', lastIntent);
+        // Detect multi-package requests FIRST
+        const multiPackageRequest = detectMultiPackageRequest(sanitizedMessage, recentMessages);
+        let requestedPackages: string[] | null = null;
 
-        // CRITICAL FIX: If intent is "both", ensure topic is division-only
-        // This prevents price guard from scoping to single package
-        if (intent === 'both') {
-          // Check if we recently listed multiple packages for a division
-          const listedPackages = getLastListedDivisionPackages(recentMessages);
+        if (multiPackageRequest) {
+          requestedPackages = multiPackageRequest.requestedPackages;
+          console.log('[Chat] 🔧 Multi-package request detected - packages:', requestedPackages, 'division:', multiPackageRequest.division);
 
-          if (listedPackages) {
-            // Use the division from the listing
-            console.log('[Chat] 🔧 Intent "both" detected with recent package listing - using division:', listedPackages.division);
-            topic = { division: listedPackages.division };
-          } else if (topic.package && topic.division) {
-            // Fallback: drop package from current topic
-            console.log('[Chat] 🔧 Intent "both" detected - dropping package scope from topic:', topic.package, '→ division-only');
-            topic = { division: topic.division };
-          } else if (!topic.division) {
-            // No topic at all - need to get from context
-            const lastTopic = intentService.getLastTopic(recentMessages);
-            if (lastTopic.division) {
-              console.log('[Chat] 🔧 Intent "both" with no topic - using last division:', lastTopic.division);
-              topic = { division: lastTopic.division };
+          // Force topic to division-only (never single package)
+          topic = { division: multiPackageRequest.division };
+          intent = 'both'; // Force "both" intent for multi-package requests
+        } else {
+          // Detect intent and extract topic hint
+          console.log('[Chat] Step 4: Detect intent and extract topic hint...');
+          intent = intentService.detectIntent(sanitizedMessage, false);  // No disambiguation flag needed
+          topic = intentService.extractTopic(sanitizedMessage, recentMessages, lastIntent || undefined);
+          console.log('[Chat] Intent hint:', intent, '| Topic hint:', JSON.stringify(topic));
+          console.log('[Chat] Last Intent:', lastIntent);
+
+          // CRITICAL FIX: If intent is "both", ensure topic is division-only
+          // This prevents price guard from scoping to single package
+          if (intent === 'both') {
+            // Check if we recently listed multiple packages for a division
+            const listedPackages = getLastListedDivisionPackages(recentMessages);
+
+            if (listedPackages) {
+              // Use the division from the listing
+              console.log('[Chat] 🔧 Intent "both" detected with recent package listing - using division:', listedPackages.division);
+              topic = { division: listedPackages.division };
+              requestedPackages = listedPackages.packages; // Track requested packages
+            } else if (topic.package && topic.division) {
+              // Fallback: drop package from current topic
+              console.log('[Chat] 🔧 Intent "both" detected - dropping package scope from topic:', topic.package, '→ division-only');
+              topic = { division: topic.division };
+            } else if (!topic.division) {
+              // No topic at all - need to get from context
+              const lastTopic = intentService.getLastTopic(recentMessages);
+              if (lastTopic.division) {
+                console.log('[Chat] 🔧 Intent "both" with no topic - using last division:', lastTopic.division);
+                topic = { division: lastTopic.division };
+              }
             }
           }
         }
 
         metadata.intent = intent;
+
+        // Store requestedPackages in metadata for price guard
+        if (requestedPackages) {
+          metadata.requestedPackages = requestedPackages;
+          console.log('[Chat] 💾 Stored requestedPackages in metadata:', requestedPackages);
+        }
         // Use LLM with tools for natural conversation
         console.log('[Chat] → Using LLM with tool calling for response generation');
 
@@ -637,7 +766,25 @@ router.post(
         // Price hallucination guard using tool context
         let validPrices: number[] = [];
 
-        if (llmResponse.toolContext && llmResponse.toolContext.allowed_prices.length > 0) {
+        // CRITICAL: If requestedPackages exists, validate against UNION of all those package prices
+        if (requestedPackages && requestedPackages.length > 0 && topic.division) {
+          // Get prices for ALL requested packages
+          const division = PRICING_DATA[topic.division];
+          if (division) {
+            const packagePrices: number[] = [];
+            for (const pkgId of requestedPackages) {
+              const pkg = division.packages.find(p => p.id === pkgId);
+              if (pkg && typeof pkg.price === 'number') {
+                packagePrices.push(pkg.price);
+                if (pkg.optional_support && typeof pkg.optional_support.price === 'number') {
+                  packagePrices.push(pkg.optional_support.price);
+                }
+              }
+            }
+            validPrices = packagePrices;
+            console.log('[Guard] Using multi-package prices (UNION) for packages:', requestedPackages, '→ prices:', validPrices);
+          }
+        } else if (llmResponse.toolContext && llmResponse.toolContext.allowed_prices.length > 0) {
           validPrices = llmResponse.toolContext.allowed_prices;
           console.log('[Guard] Using tool-scoped prices:', validPrices);
         } else if (topic.package || topic.division) {
@@ -694,19 +841,34 @@ router.post(
         // Handle contact buttons in response
         if (reply.includes('{{BTN_')) {
           metadata.pendingLeadField = 'contact_choice';
-          console.log('[Chat] LLM showed contact buttons');
+          metadata.ctaShown = true;
+          metadata.ctaShownAt = new Date().toISOString();
+          console.log('[Chat] LLM showed contact buttons - marked CTA shown');
         }
 
-        // If user is qualified and asked a question during contact choice, re-append buttons
-        // BUT: don't re-append if they just acknowledged with "ok/thanks"
+        // If user is qualified and asked a question during contact choice
+        // Apply CTA cooldown to prevent spam
         const isAcknowledgement = /^(ok|okay|thanks|thank you|got it|sounds good|perfect|great|cool)$/i.test(sanitizedMessage.trim());
+        const userExpressesProceed = detectProceedIntent(sanitizedMessage);
+
         if (pendingLeadField === 'contact_choice' &&
             !reply.includes('{{BTN_') &&
             !isAcknowledgement &&
             existingLead && existingLead.name && existingLead.email) {
-          console.log('[Chat] ℹ️  Re-appending contact buttons after answering question');
-          reply += '\n\nHow would you like to move forward?\n\n{{BTN_MEETING}}\n{{BTN_WHATSAPP}}\n{{BTN_TELEGRAM}}\n{{BTN_CONTACT_FORM}}\n{{BTN_CALL_US}}';
-          metadata.pendingLeadField = 'contact_choice';
+
+          // Check CTA cooldown
+          if (shouldShowCta(recentMessages, userExpressesProceed)) {
+            console.log('[Chat] ℹ️  Re-appending contact buttons after answering question');
+            reply += '\n\nHow would you like to move forward?\n\n{{BTN_MEETING}}\n{{BTN_WHATSAPP}}\n{{BTN_TELEGRAM}}\n{{BTN_CONTACT_FORM}}\n{{BTN_CALL_US}}';
+            metadata.pendingLeadField = 'contact_choice';
+            metadata.ctaShown = true;
+            metadata.ctaShownAt = new Date().toISOString();
+          } else {
+            // Cooldown active - just add a subtle reminder
+            console.log('[Chat] CTA cooldown active - adding subtle reminder');
+            reply += '\n\n_When you\'re ready, choose Meeting, WhatsApp, or Telegram._';
+            metadata.pendingLeadField = 'contact_choice'; // Keep pending
+          }
         }
 
         // Enhance lead with server-side topic tracking
