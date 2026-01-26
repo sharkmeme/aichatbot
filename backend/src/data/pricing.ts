@@ -245,7 +245,7 @@ export function formatPrice(price: number | 'custom', recurring?: string): strin
   if (recurring === 'monthly') {
     return `${priceStr}/month`;
   } else if (recurring === 'one-time') {
-    return priceStr;
+    return `${priceStr} (one-time)`;
   }
 
   return priceStr;
