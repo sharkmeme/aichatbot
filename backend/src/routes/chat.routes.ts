@@ -494,7 +494,9 @@ router.post(
         return /\b(price|pricing|cost|how much|ow much|much for|\$|rate|fee)\b/i.test(message);
       }
 
-      function getPackageShortDescription(packageId: string): string {
+      function getPackageShortDescription(packageId: string | undefined): string {
+        if (!packageId) return 'business automation';
+
         const descriptions: Record<string, string> = {
           'lead-intake-crm': 'lead intake and CRM automation',
           'ai-outreach': 'AI-powered outreach and follow-up',
