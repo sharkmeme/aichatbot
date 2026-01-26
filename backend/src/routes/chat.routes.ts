@@ -314,8 +314,12 @@ router.post(
         console.log('[LeadFlow] ✨ PENDING LEAD FIELD ACTIVE:', pendingLeadField);
 
         if (pendingLeadField === 'name') {
-          // Accept any short text as name (unless it's clearly a question)
-          const looksLikeQuestion = /^(what|how|when|where|why|who|can|do|is|are)\b/i.test(sanitizedMessage);
+          // Accept any short text as name unless it's clearly a question
+          // Only treat as question if: ends with ? OR (starts with question word AND has >2 words)
+          const endsWithQuestion = sanitizedMessage.trim().endsWith('?');
+          const startsWithQuestionWord = /^(what|how|when|where|why|who|can|could|do|does|is|are|tell|show|explain)\b/i.test(sanitizedMessage);
+          const wordCount = sanitizedMessage.trim().split(/\s+/).length;
+          const looksLikeQuestion = endsWithQuestion || (startsWithQuestionWord && wordCount > 2);
 
           if (!looksLikeQuestion) {
             const name = sanitizeName(sanitizedMessage);
@@ -418,273 +422,189 @@ router.post(
         }
       }
 
-      // PRIORITY 2+: Normal intent/topic routing (only if pending wasn't resolved)
-      if (!pendingResolved) {
-        // Detect intent and topic
-        console.log('[Chat] Step 4: Detect intent...');
-        intent = intentService.detectIntent(sanitizedMessage, !!pendingDisambiguation);
-        topic = intentService.extractTopic(sanitizedMessage, recentMessages, lastIntent || undefined);
-        const isMultiplePackages = intentService.detectMultiplePackages(sanitizedMessage);
-        console.log('[Chat] Intent:', intent, '| Topic:', JSON.stringify(topic), '| Multiple:', isMultiplePackages);
-        console.log('[Chat] Last Intent:', lastIntent, '| Pending Disambiguation:', !!pendingDisambiguation);
+      // Check for pending question (new single-state approach)
+      const pendingQuestion = pendingDisambiguation ? {
+        type: 'pricing_or_inclusions',
+        topic: pendingDisambiguation.topic,
+        askedAt: pendingDisambiguation.askedAt
+      } : null;
 
-        metadata.intent = intent;
+      // PRIORITY 2: Handle pending question resolution
+      if (pendingQuestion && !pendingResolved) {
+        console.log('[Chat] 🔄 PENDING QUESTION ACTIVE:', pendingQuestion.type);
 
-        // Handle disambiguation resolution (highest priority after pending state check)
-        if (intent === 'disambiguation_resolution' && pendingDisambiguation) {
-          const choice = intentService.detectDisambiguationResolution(sanitizedMessage);
-          const disambiguationTopic = pendingDisambiguation.topic;
+        const normalized = sanitizedMessage.toLowerCase().trim();
 
-          if (choice === null) {
-            // User canceled or asked a new question - clear pending and route normally
-            console.log('[Chat] ⚠️  User canceled disambiguation or asked new question - clearing state');
-            // Fall through to normal routing (don't set reply here)
-          } else {
-            console.log('[Chat] ✓ RESOLVING PENDING DISAMBIGUATION');
-            console.log('[Chat] 📊 Disambiguation choice:', choice, '| Topic:', JSON.stringify(disambiguationTopic));
+        // Detect user's choice
+        let choice: 'pricing' | 'inclusions' | 'both' | 'cancel' | null = null;
 
-            if (choice === 'pricing' || choice === 'both') {
-              const response = pricingResponder.generatePricingResponse(disambiguationTopic);
-              reply = response.reply;
-              lead = response.lead;
+        if (/^(price|pricing|cost|how much|yes)$/i.test(normalized) || /\b(price|pricing|cost)\b/i.test(normalized)) {
+          choice = 'pricing';
+        } else if (/^(included|inclusions|features|what'?s included)$/i.test(normalized) || /\b(included|inclusions|features)\b/i.test(normalized)) {
+          choice = 'inclusions';
+        } else if (/\b(both|all|everything)\b/i.test(normalized)) {
+          choice = 'both';
+        } else if (/^(no|cancel|skip|nevermind)$/i.test(normalized)) {
+          choice = 'cancel';
+        } else if (/^(what|how|when|where|why|who|tell|show)\b/i.test(normalized)) {
+          // User asked a new question - clear pending
+          choice = 'cancel';
+        }
 
-              if (choice === 'both') {
-                // Also append inclusions
-                const inclusionsResponse = pricingResponder.generateInclusionsResponse(disambiguationTopic, false);
-                reply += `\n\n**What's included:**\n${inclusionsResponse.reply}`;
-              }
-            } else if (choice === 'inclusions') {
-              const response = pricingResponder.generateInclusionsResponse(disambiguationTopic, false);
-              reply = response.reply;
-              lead = response.lead;
+        if (choice && choice !== 'cancel') {
+          console.log('[Chat] ✓ RESOLVING PENDING QUESTION:', choice);
+
+          if (choice === 'pricing' || choice === 'both') {
+            const response = pricingResponder.generatePricingResponse(pendingQuestion.topic);
+            reply = response.reply;
+            lead = response.lead;
+
+            if (choice === 'both') {
+              const inclusionsResponse = pricingResponder.generateInclusionsResponse(pendingQuestion.topic, false);
+              reply += `\n\n**What's included:**\n${inclusionsResponse.reply}`;
             }
-          }
-        }
-        // Handle buy intent
-        else if (intent === 'buy') {
-          console.log('[Chat] ✓ BUY INTENT DETECTED - Starting lead capture');
-          // Start lead qualification flow
-          lead = enhanceLeadFromTopic(null, topic, existingLead);
-
-          if (topic.package || topic.division) {
-            lead.notes = lead.notes ? `${lead.notes}; Ready to buy` : 'Ready to buy';
-          }
-
-          if (existingLead && existingLead.name && existingLead.email) {
-            // Already qualified - show contact options
-            reply = "Great! How would you like to move forward?\n\n{{BTN_MEETING}}\n{{BTN_WHATSAPP}}\n{{BTN_TELEGRAM}}\n{{BTN_CONTACT_FORM}}\n{{BTN_CALL_US}}";
-            metadata.pendingLeadField = 'contact_choice';
-          } else if (existingLead && existingLead.name) {
-            // Have name, need email
-            reply = "Perfect! What's your email address?";
-            metadata.pendingLeadField = 'email';
-          } else {
-            // Start from scratch
-            reply = "Excellent! Let's get started. What's your name?";
-            metadata.pendingLeadField = 'name';
-          }
-        }
-        // Check for contact method selection
-        else if (detectContactMethodSelection(sanitizedMessage) && existingLead && (existingLead.name || existingLead.email)) {
-          const selectedContact = detectContactMethodSelection(sanitizedMessage)!;
-          console.log('[Chat] ✓ DETERMINISTIC CONTACT METHOD SELECTION');
-          const buttonMap: Record<string, string> = {
-            'telegram': '{{BTN_TELEGRAM}}',
-            'whatsapp': '{{BTN_WHATSAPP}}',
-            'meeting': '{{BTN_MEETING}}',
-            'contact_form': '{{BTN_CONTACT_FORM}}',
-            'call': '{{BTN_CALL_US}}'
-          };
-          const contactName = selectedContact.charAt(0).toUpperCase() + selectedContact.slice(1).replace('_', ' ');
-          reply = `Tap the ${contactName} button below.\n\n${buttonMap[selectedContact]}`;
-          lead = enhanceLeadFromTopic(null, topic, existingLead);
-          lead.preferred_contact_channel = selectedContact;
-        }
-        // Route based on intent
-        else if (intent === 'pricing') {
-          // Deterministic pricing response (NO LLM)
-          console.log('[Chat] ✓ DETERMINISTIC PRICING PATH (no LLM call)');
-          const response = pricingResponder.generatePricingResponse(topic);
-          reply = response.reply;
-          lead = response.lead;
-        } else if (intent === 'inclusions') {
-          // Deterministic inclusions response (NO LLM)
-          console.log('[Chat] ✓ DETERMINISTIC INCLUSIONS PATH (no LLM call)');
-          const isMultiplePackages = intentService.detectMultiplePackages(sanitizedMessage);
-
-          // Handle "and the other?" for packages
-          if (isMultiplePackages && topic.package) {
-            // Get other packages in same division
-            const otherPackages = intentService.getOtherPackages(topic);
-            if (otherPackages.length > 0) {
-              // Show the first/only other package
-              const otherTopic = otherPackages[0];
-              const response = pricingResponder.generateInclusionsResponse(otherTopic, false);
-              reply = response.reply;
-              lead = response.lead;
-            } else {
-              // Fallback to normal inclusions
-              const response = pricingResponder.generateInclusionsResponse(topic, isMultiplePackages);
-              reply = response.reply;
-              lead = response.lead;
-            }
-          } else {
-            const response = pricingResponder.generateInclusionsResponse(topic, isMultiplePackages);
+          } else if (choice === 'inclusions') {
+            const response = pricingResponder.generateInclusionsResponse(pendingQuestion.topic, false);
             reply = response.reply;
             lead = response.lead;
           }
-        } else if (intent === 'budget_confirmation') {
-          // Budget confirmation - acknowledge and move forward
-          console.log('[Chat] ✓ DETERMINISTIC BUDGET CONFIRMATION (no LLM call)');
-          reply = "Perfect! Let's move forward. What's your name?";
-          metadata.pendingLeadField = 'name';
-          lead = {
-            name: undefined,
-            email: undefined,
-            phone: undefined,
-            business_type: undefined,
-            company_name: undefined,
-            interest_area: topic.package || topic.division,
-            budget_range: undefined, // Will be set from last pricing discussion
-            preferred_contact_channel: undefined,
-            notes: 'Budget confirmed'
-          };
-        } else if (intent === 'definition') {
-          // Definition query - explain what X is
-          console.log('[Chat] ✓ DETERMINISTIC DEFINITION PATH (no LLM call)');
-          const response = pricingResponder.generateDefinitionResponse(topic);
-          reply = response.reply;
-          lead = response.lead;
-        } else if (intent === 'billing_cadence') {
-          // Billing cadence question - one-time vs monthly
-          console.log('[Chat] ✓ DETERMINISTIC BILLING CADENCE PATH (no LLM call)');
-          const response = pricingResponder.generateBillingCadenceResponse(topic);
-          reply = response.reply;
-          lead = response.lead;
-        } else {
-          // CRM Disambiguation: if topic is identified but intent is general, ask clarifying question
-          // BUT: if last intent was pricing and message is "and for X?", prefer pricing (not disambiguation)
-          const isAndForPattern = /\b(and|what about) (for |about )/i.test(sanitizedMessage);
-          const shouldDisambiguate = topic.package && !hasPricingIntent(sanitizedMessage) &&
-                                      !(isAndForPattern && lastIntent === 'pricing');
 
-          if (shouldDisambiguate) {
-            console.log('[Chat] ✓ DETERMINISTIC DISAMBIGUATION (topic identified but no pricing intent)');
-            const division = topic.division ? PRICING_DATA[topic.division] : null;
-            const pkg = division?.packages.find(p => p.id === topic.package);
-            if (pkg) {
-              reply = `${pkg.name} helps with ${getPackageShortDescription(topic.package)}. Do you want pricing or what's included?`;
-              lead = enhanceLeadFromTopic(null, topic, existingLead);
-              // Store pending disambiguation state
-              metadata.pendingDisambiguation = { topic, askedAt: new Date() };
-              console.log('[Chat] 💾 PENDING DISAMBIGUATION STATE STORED:', JSON.stringify(topic));
-            } else {
-              // Fallback to LLM
-              reply = await handleLLMPath();
-            }
-          } else if (isAndForPattern && lastIntent === 'pricing' && topic.package) {
-            // "and for X?" after pricing context → show pricing
-            console.log('[Chat] ✓ DETERMINISTIC PRICING PATH (and for X after pricing context)');
-            const response = pricingResponder.generatePricingResponse(topic);
-            reply = response.reply;
-            lead = response.lead;
-          } else {
-            // General query - use LLM with knowledge base
-            reply = await handleLLMPath();
-          }
+          pendingResolved = true;
+          // Don't set pendingDisambiguation in metadata (clear it)
+        } else if (choice === 'cancel') {
+          console.log('[Chat] ⚠️  User canceled pending question or asked new question');
+          // Fall through to normal routing
         }
       }
 
-      async function handleLLMPath(): Promise<string> {
-        console.log('[Chat] → LLM PATH (general query)');
-        const llmResponse = await openaiService.generateChatCompletion(
+      // PRIORITY 3+: Normal intent/topic routing with LLM (only if pending wasn't resolved)
+      if (!pendingResolved) {
+        // Detect intent and extract topic hint
+        console.log('[Chat] Step 4: Detect intent and extract topic hint...');
+        intent = intentService.detectIntent(sanitizedMessage, false);  // No disambiguation flag needed
+        topic = intentService.extractTopic(sanitizedMessage, recentMessages, lastIntent || undefined);
+        console.log('[Chat] Intent hint:', intent, '| Topic hint:', JSON.stringify(topic));
+        console.log('[Chat] Last Intent:', lastIntent);
+
+        metadata.intent = intent;
+        // Use LLM with tools for natural conversation
+        console.log('[Chat] → Using LLM with tool calling for response generation');
+
+        const llmResponse = await openaiService.generateChatCompletionWithTools(
           recentMessages,
           sanitizedMessage,
           existingLead,
-          topic // Pass topic for context
+          {
+            topic,
+            pendingLeadField,
+            pendingQuestion,
+            lastIntent: lastIntent || undefined
+          }
         );
-        let llmReply = llmResponse.reply;
-        lead = llmResponse.lead;
 
-        // Topic-scoped price hallucination guard
+        reply = llmResponse.reply;
+        lead = llmResponse.lead || null;
+
+        // Update state from LLM output
+        if (llmResponse.stateUpdate) {
+          console.log('[Chat] LLM returned state update:', JSON.stringify(llmResponse.stateUpdate));
+
+          // Update topic if LLM identified one
+          if (llmResponse.stateUpdate.topic) {
+            topic = llmResponse.stateUpdate.topic;
+          }
+
+          // Handle pending question from LLM
+          if (llmResponse.stateUpdate.pending_question) {
+            metadata.pendingDisambiguation = {
+              topic: llmResponse.stateUpdate.pending_question.topic,
+              askedAt: new Date()
+            };
+            console.log('[Chat] 💾 LLM set pending question:', JSON.stringify(llmResponse.stateUpdate.pending_question));
+          }
+
+          // Update intent if provided
+          if (llmResponse.stateUpdate.intent) {
+            metadata.intent = llmResponse.stateUpdate.intent;
+          }
+        }
+
+        // Price hallucination guard using tool context
+        let validPrices: number[] = [];
+
+        if (llmResponse.toolContext && llmResponse.toolContext.allowed_prices.length > 0) {
+          validPrices = llmResponse.toolContext.allowed_prices;
+          console.log('[Guard] Using tool-scoped prices:', validPrices);
+        } else if (topic.package || topic.division) {
+          validPrices = getTopicScopedPrices(topic);
+          console.log('[Guard] Using topic-scoped prices:', validPrices);
+        } else {
+          validPrices = getAllValidPrices();
+          console.log('[Guard] Using global prices');
+        }
+
+        // Extract mentioned prices from reply
         const pricePattern = /\$(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)/g;
         const mentionedPrices: number[] = [];
         let match;
 
-        while ((match = pricePattern.exec(llmReply)) !== null) {
+        while ((match = pricePattern.exec(reply)) !== null) {
           const priceStr = match[1].replace(/,/g, '');
           const price = parseInt(priceStr, 10);
           mentionedPrices.push(price);
         }
 
-        // If LLM mentioned prices, validate against topic-scoped prices
-        if (mentionedPrices.length > 0) {
-          let validPrices: number[];
-
-          if (topic.package || topic.division) {
-            // Use topic-scoped validation
-            validPrices = getTopicScopedPrices(topic);
-            console.log('[Chat] Topic-scoped price validation:', validPrices);
-          } else {
-            // No topic identified, use global validation
-            validPrices = getAllValidPrices();
-            console.log('[Chat] Global price validation (no topic)');
-          }
-
-          // Check if LLM hallucinated prices
+        // Check for hallucinated prices
+        if (mentionedPrices.length > 0 && validPrices.length > 0) {
           const hallucinatedPrices = mentionedPrices.filter(p => !validPrices.includes(p));
-          if (hallucinatedPrices.length > 0) {
-            console.error('[Chat] ⚠️  PRICE HALLUCINATION DETECTED! Invalid prices:', hallucinatedPrices);
-            console.error('[Chat] ⚠️  Topic:', JSON.stringify(topic));
-            console.error('[Chat] ⚠️  Valid prices for topic:', validPrices);
 
-            // Use deterministic pricing response for the resolved topic
-            if (topic.package || topic.division) {
-              console.error('[Chat] ⚠️  Replacing with deterministic pricing for topic');
-              const pricingResponse = pricingResponder.generatePricingResponse(topic);
-              llmReply = pricingResponse.reply;
-              lead = pricingResponse.lead;
+          if (hallucinatedPrices.length > 0) {
+            console.error('[Guard] ⚠️  PRICE HALLUCINATION DETECTED!');
+            console.error('[Guard] Mentioned:', mentionedPrices);
+            console.error('[Guard] Allowed:', validPrices);
+            console.error('[Guard] Hallucinated:', hallucinatedPrices);
+
+            // Replace with deterministic response
+            if (topic.package && topic.division) {
+              console.error('[Guard] → Replacing with deterministic pricing for topic');
+              const response = pricingResponder.generatePricingResponse(topic);
+              reply = response.reply;
+              lead = response.lead || lead;
             } else {
-              console.error('[Chat] ⚠️  No topic - using safe fallback');
-              llmReply = "I can share exact package pricing—which division interests you: Studios / Bunny Code / Honey Software / VIP?";
+              console.error('[Guard] → Using safe fallback');
+              reply = "I can share exact package pricing—which division interests you: Studios / Bunny Code / Honey Software / VIP?";
             }
           }
         }
 
-        // Enhance lead with server-side topic tracking
-        lead = enhanceLeadFromTopic(lead, topic, existingLead);
+        // Handle buy intent from LLM response - set up lead flow
+        if (reply.includes("What's your name?") || reply.includes("what's your name")) {
+          metadata.pendingLeadField = 'name';
+          console.log('[Chat] LLM triggered name collection');
+        } else if (reply.includes("email address") || reply.includes("your email")) {
+          metadata.pendingLeadField = 'email';
+          console.log('[Chat] LLM triggered email collection');
+        }
 
-        // If user has name+email but no contact method chosen yet, re-offer buttons
-        if (existingLead && existingLead.name && existingLead.email && !existingLead.preferred_contact_channel && pendingLeadField === 'contact_choice') {
-          console.log('[Chat] ℹ️  User qualified but asked question - appending contact options');
-          llmReply += '\n\nHow would you like to move forward?\n\n{{BTN_MEETING}}\n{{BTN_WHATSAPP}}\n{{BTN_TELEGRAM}}\n{{BTN_CONTACT_FORM}}\n{{BTN_CALL_US}}';
+        // Handle contact buttons in response
+        if (reply.includes('{{BTN_')) {
+          metadata.pendingLeadField = 'contact_choice';
+          console.log('[Chat] LLM showed contact buttons');
+        }
+
+        // If user is qualified and asked a question during contact choice, re-append buttons
+        if (pendingLeadField === 'contact_choice' &&
+            !reply.includes('{{BTN_') &&
+            existingLead && existingLead.name && existingLead.email) {
+          console.log('[Chat] ℹ️  Re-appending contact buttons after answering question');
+          reply += '\n\nHow would you like to move forward?\n\n{{BTN_MEETING}}\n{{BTN_WHATSAPP}}\n{{BTN_TELEGRAM}}\n{{BTN_CONTACT_FORM}}\n{{BTN_CALL_US}}';
           metadata.pendingLeadField = 'contact_choice';
         }
 
-        return llmReply;
-      }
-
-      function hasPricingIntent(message: string): boolean {
-        return /\b(price|pricing|cost|how much|ow much|much for|\$|rate|fee)\b/i.test(message);
-      }
-
-      function getPackageShortDescription(packageId: string | undefined): string {
-        if (!packageId) return 'business automation';
-
-        const descriptions: Record<string, string> = {
-          'lead-intake-crm': 'lead intake and CRM automation',
-          'ai-outreach': 'AI-powered outreach and follow-up',
-          'support-ticket': 'support ticket automation',
-          'chat-assistant': 'website chat assistance',
-          'phone-support': 'phone support automation',
-          'masterminds': 'group coaching and community',
-          'fast-track': '1-on-1 coaching and fast-track support',
-          'starter': 'monthly video content creation',
-          'growth': 'scaled content production',
-          'content-engine': 'full content automation',
-          'studio-partner': 'comprehensive video partnership'
-        };
-        return descriptions[packageId] || 'business automation';
+        // Enhance lead with server-side topic tracking
+        if (lead) {
+          lead = enhanceLeadFromTopic(lead, topic, existingLead);
+        }
       }
 
       // Ensure lead always has a value (server-side generation)
