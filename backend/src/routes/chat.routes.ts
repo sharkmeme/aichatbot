@@ -561,21 +561,27 @@ router.post(
         console.log('[Chat] Intent hint:', intent, '| Topic hint:', JSON.stringify(topic));
         console.log('[Chat] Last Intent:', lastIntent);
 
-        // CRITICAL FIX: If user says "both/all/everything/compare" and we have a package-scoped topic,
-        // drop the package and keep division only. This prevents price guard from scoping to single package.
-        const wantsBothOrAll = /\b(both|all|everything|compare|info to both)\b/i.test(sanitizedMessage);
-        if (wantsBothOrAll) {
+        // CRITICAL FIX: If intent is "both", ensure topic is division-only
+        // This prevents price guard from scoping to single package
+        if (intent === 'both') {
           // Check if we recently listed multiple packages for a division
           const listedPackages = getLastListedDivisionPackages(recentMessages);
 
           if (listedPackages) {
-            // Use the division from the listing, not from topic hint
-            console.log('[Chat] 🔧 "both/all" detected with recent package listing - using division:', listedPackages.division);
+            // Use the division from the listing
+            console.log('[Chat] 🔧 Intent "both" detected with recent package listing - using division:', listedPackages.division);
             topic = { division: listedPackages.division };
           } else if (topic.package && topic.division) {
             // Fallback: drop package from current topic
-            console.log('[Chat] 🔧 "both/all" detected - dropping package scope from topic:', topic.package, '→ division-only');
+            console.log('[Chat] 🔧 Intent "both" detected - dropping package scope from topic:', topic.package, '→ division-only');
             topic = { division: topic.division };
+          } else if (!topic.division) {
+            // No topic at all - need to get from context
+            const lastTopic = intentService.getLastTopic(recentMessages);
+            if (lastTopic.division) {
+              console.log('[Chat] 🔧 Intent "both" with no topic - using last division:', lastTopic.division);
+              topic = { division: lastTopic.division };
+            }
           }
         }
 

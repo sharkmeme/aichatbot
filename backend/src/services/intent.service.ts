@@ -2,7 +2,7 @@ import { Message } from '../types';
 import { PRICING_DATA } from '../data/pricing';
 import { fuzzyMatch } from '../utils/fuzzy';
 
-export type Intent = 'pricing' | 'inclusions' | 'budget_confirmation' | 'definition' | 'billing_cadence' | 'buy' | 'disambiguation_resolution' | 'general';
+export type Intent = 'pricing' | 'inclusions' | 'both' | 'budget_confirmation' | 'definition' | 'billing_cadence' | 'buy' | 'disambiguation_resolution' | 'general';
 
 export interface ConversationTopic {
   division?: string; // studios, vip, code, software
@@ -106,9 +106,15 @@ export class IntentService {
       }
     }
 
-    // "And the other" / "both packages" patterns (inclusions)
-    if (/\b(and |what about )?(the )?(other|another)( one| package| plan)?\b/.test(normalized) ||
-        /\bboth (packages|plans|tiers)\b/.test(normalized)) {
+    // "Both/all/compare" patterns (multi-package comparison)
+    // Must come before inclusions to catch "both" as a standalone intent
+    if (/^(both|all|everything|compare|info to both|info for both)$/i.test(normalized) ||
+        /\b(both|all|everything|compare)\b/i.test(normalized)) {
+      return 'both';
+    }
+
+    // "And the other" patterns (inclusions)
+    if (/\b(and |what about )?(the )?(other|another)( one| package| plan)?\b/.test(normalized)) {
       return 'inclusions';
     }
 
@@ -299,6 +305,15 @@ export class IntentService {
       topic.division = 'software';
     }
 
+    // CRITICAL: Check for "both/all/compare" patterns BEFORE package detection
+    // These require division-only scope, never package-specific
+    const wantsBothOrAll = /\b(both|all|everything|compare|info to both|info for both)\b/i.test(normalized);
+    if (wantsBothOrAll) {
+      console.log('[Intent] "both/all" pattern detected - will skip package detection and vague fallback');
+      // Return division-only topic, no package detection needed
+      return topic;
+    }
+
     // Package detection with fuzzy matching and aliases
     // ONLY apply if message has intent keywords OR match is very high confidence
     const packageMatch = this.detectPackageFromAliases(normalized);
@@ -318,7 +333,8 @@ export class IntentService {
     }
 
     // If no topic found in current message and message is vague, check recent messages
-    if (!topic.division && !topic.package && this.isVagueQuery(message)) {
+    // SKIP this for "both/all" patterns (already handled above)
+    if (!wantsBothOrAll && !topic.division && !topic.package && this.isVagueQuery(message)) {
       const lastTopic = this.getLastTopic(recentMessages);
       if (lastTopic.division || lastTopic.package) {
         console.log('[Intent] Vague query detected, using last topic:', lastTopic);
