@@ -3,11 +3,16 @@ import { validateChatRequest, sanitizeInput } from '../middleware/validation';
 import { sessionRateLimiter } from '../middleware/rateLimiter';
 import { DatabaseService } from '../services/database.service';
 import { OpenAIService } from '../services/openai.service';
-import { ChatRequest, ChatResponse } from '../types';
+import { IntentService } from '../services/intent.service';
+import { PricingResponderService } from '../services/pricing-responder.service';
+import { ChatRequest, ChatResponse, Lead } from '../types';
+import { getAllValidPrices } from '../data/pricing';
 
 const router = Router();
 const dbService = new DatabaseService();
 const openaiService = new OpenAIService();
+const intentService = new IntentService();
+const pricingResponder = new PricingResponderService();
 
 /**
  * POST /api/chat
@@ -50,13 +55,79 @@ router.post(
       const recentMessages = await dbService.getRecentMessages(conversation.id);
       console.log('[Chat] Recent messages count:', recentMessages.length);
 
-      // Generate AI response with existing lead context
-      console.log('[Chat] Step 4: Generate AI response...');
-      const { reply, lead } = await openaiService.generateChatCompletion(
-        recentMessages,
-        sanitizedMessage,
-        existingLead
-      );
+      // Detect intent and topic
+      console.log('[Chat] Step 4: Detect intent...');
+      const intent = intentService.detectIntent(sanitizedMessage);
+      const topic = intentService.extractTopic(sanitizedMessage, recentMessages);
+      const isMultiplePackages = intentService.detectMultiplePackages(sanitizedMessage);
+      console.log('[Chat] Intent:', intent, '| Topic:', JSON.stringify(topic), '| Multiple:', isMultiplePackages);
+
+      let reply: string;
+      let lead: Lead | null = null;
+
+      // Route based on intent
+      if (intent === 'pricing') {
+        // Deterministic pricing response (NO LLM)
+        console.log('[Chat] ✓ DETERMINISTIC PRICING PATH (no LLM call)');
+        const response = pricingResponder.generatePricingResponse(topic);
+        reply = response.reply;
+        lead = response.lead;
+      } else if (intent === 'inclusions') {
+        // Deterministic inclusions response (NO LLM)
+        console.log('[Chat] ✓ DETERMINISTIC INCLUSIONS PATH (no LLM call)');
+        const response = pricingResponder.generateInclusionsResponse(topic, isMultiplePackages);
+        reply = response.reply;
+        lead = response.lead;
+      } else {
+        // General query - use LLM with knowledge base
+        console.log('[Chat] → LLM PATH (general query)');
+        const llmResponse = await openaiService.generateChatCompletion(
+          recentMessages,
+          sanitizedMessage,
+          existingLead,
+          topic // Pass topic for context
+        );
+        reply = llmResponse.reply;
+        lead = llmResponse.lead;
+
+        // Price hallucination guard
+        const validPrices = getAllValidPrices();
+        const pricePattern = /\$(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)/g;
+        const mentionedPrices: number[] = [];
+        let match;
+
+        while ((match = pricePattern.exec(reply)) !== null) {
+          const priceStr = match[1].replace(/,/g, '');
+          const price = parseInt(priceStr, 10);
+          mentionedPrices.push(price);
+        }
+
+        // Check if LLM hallucinated prices
+        const hallucinatedPrices = mentionedPrices.filter(p => !validPrices.includes(p));
+        if (hallucinatedPrices.length > 0) {
+          console.error('[Chat] ⚠️  PRICE HALLUCINATION DETECTED! Invalid prices:', hallucinatedPrices);
+          console.error('[Chat] ⚠️  Blocking response and using safe fallback');
+          reply = "I can share exact package pricing—which division interests you: Studios / Bunny Code / Honey Software / VIP?";
+          // Keep the lead data from LLM if present
+        }
+      }
+
+      // Enforce LEAD_JSON (must always be present)
+      if (!lead) {
+        console.log('[Chat] ⚠️  No LEAD_JSON - generating default');
+        lead = {
+          name: null,
+          email: null,
+          phone: null,
+          business_type: null,
+          company_name: null,
+          interest_area: null,
+          budget_range: null,
+          preferred_contact_channel: null,
+          notes: null
+        };
+      }
+
       console.log('[Chat] AI response generated');
 
       // Upsert lead if we extracted lead data (non-blocking)

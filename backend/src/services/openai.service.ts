@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import { config, SYSTEM_PROMPT } from '../config';
 import { OpenAIChatMessage, Lead, Message } from '../types';
 import { KnowledgeService } from './knowledge.service';
+import { ConversationTopic } from './intent.service';
 
 export class OpenAIService {
   private client: OpenAI;
@@ -20,7 +21,8 @@ export class OpenAIService {
   async generateChatCompletion(
     messages: Message[],
     userMessage: string,
-    existingLead?: Lead | null
+    existingLead?: Lead | null,
+    topic?: ConversationTopic
   ): Promise<{ reply: string; lead: Lead | null }> {
     try {
       // Build conversation history for OpenAI
@@ -40,6 +42,20 @@ export class OpenAIService {
           content: knowledgeContent,
         });
         console.log(`[OpenAI] Injected ${relevantDocs.length} knowledge documents into context`);
+      }
+
+      // Inject conversation topic context if available (for follow-up handling)
+      if (topic && (topic.division || topic.package)) {
+        let topicContext = 'CURRENT CONVERSATION TOPIC:\n';
+        if (topic.division) topicContext += `Division: ${topic.division}\n`;
+        if (topic.package) topicContext += `Package: ${topic.package}\n`;
+        topicContext += '\nUse this context when the user asks follow-up questions like "what\'s included?" or "how much?"';
+
+        chatMessages.push({
+          role: 'system',
+          content: topicContext,
+        });
+        console.log('[OpenAI] Injected topic context:', JSON.stringify(topic));
       }
 
       // Inject existing lead context if available
