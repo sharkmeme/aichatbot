@@ -3,7 +3,7 @@ import { validateChatRequest, sanitizeInput } from '../middleware/validation';
 import { sessionRateLimiter } from '../middleware/rateLimiter';
 import { DatabaseService } from '../services/database.service';
 import { OpenAIService } from '../services/openai.service';
-import { IntentService, ConversationTopic, PendingDisambiguation, Intent } from '../services/intent.service';
+import { IntentService, ConversationTopic, PendingDisambiguation, PendingLeadField, Intent } from '../services/intent.service';
 import { PricingResponderService } from '../services/pricing-responder.service';
 import { ChatRequest, ChatResponse, Lead, Message } from '../types';
 import { getAllValidPrices, PRICING_DATA } from '../data/pricing';
@@ -13,6 +13,27 @@ const dbService = new DatabaseService();
 const openaiService = new OpenAIService();
 const intentService = new IntentService();
 const pricingResponder = new PricingResponderService();
+
+/**
+ * Check if there's a pending lead field we're waiting for
+ * Returns the pending field name if found
+ */
+function getPendingLeadField(recentMessages: Message[]): PendingLeadField | null {
+  // Check last bot message for pending lead field metadata
+  for (let i = recentMessages.length - 1; i >= 0; i--) {
+    const msg = recentMessages[i];
+    if (msg.sender === 'bot' && msg.metadata) {
+      const metadata = typeof msg.metadata === 'string' ? JSON.parse(msg.metadata) : msg.metadata;
+      if (metadata.pendingLeadField) {
+        console.log('[LeadFlow] 🔄 PENDING LEAD FIELD FOUND:', metadata.pendingLeadField);
+        return metadata.pendingLeadField as PendingLeadField;
+      }
+    }
+    // Only check last 3 messages (avoid old stale state)
+    if (i < recentMessages.length - 3) break;
+  }
+  return null;
+}
 
 /**
  * Check if there's a pending disambiguation question in recent messages
@@ -54,6 +75,21 @@ function getLastIntent(recentMessages: Message[]): Intent | null {
     if (i < recentMessages.length - 6) break;
   }
   return null;
+}
+
+/**
+ * Validate email format
+ */
+function isValidEmail(email: string): boolean {
+  const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return emailPattern.test(email);
+}
+
+/**
+ * Sanitize name input
+ */
+function sanitizeName(name: string): string {
+  return name.trim().replace(/\s+/g, ' ');
 }
 
 /**
@@ -258,173 +294,288 @@ router.post(
       const recentMessages = await dbService.getRecentMessages(conversation.id);
       console.log('[Chat] Recent messages count:', recentMessages.length);
 
+      // Check for pending lead field (HIGHEST PRIORITY)
+      const pendingLeadField = getPendingLeadField(recentMessages);
+
       // Check for pending disambiguation state
       const pendingDisambiguation = getPendingDisambiguation(recentMessages);
       const lastIntent = getLastIntent(recentMessages);
 
-      // Detect intent and topic
-      console.log('[Chat] Step 4: Detect intent...');
-      const intent = intentService.detectIntent(sanitizedMessage, !!pendingDisambiguation);
-      const topic = intentService.extractTopic(sanitizedMessage, recentMessages, lastIntent || undefined);
-      const isMultiplePackages = intentService.detectMultiplePackages(sanitizedMessage);
-      console.log('[Chat] Intent:', intent, '| Topic:', JSON.stringify(topic), '| Multiple:', isMultiplePackages);
-      console.log('[Chat] Last Intent:', lastIntent, '| Pending Disambiguation:', !!pendingDisambiguation);
-
       let reply: string;
       let lead: Lead | null = null;
-      let metadata: any = { intent }; // Track intent in metadata
+      let metadata: any = {}; // Track metadata
+      let intent: Intent | null = null;
+      let topic: ConversationTopic = {};
 
-      // Handle disambiguation resolution (highest priority after pending state check)
-      if (intent === 'disambiguation_resolution' && pendingDisambiguation) {
-        console.log('[Chat] ✓ RESOLVING PENDING DISAMBIGUATION');
-        const choice = intentService.detectDisambiguationResolution(sanitizedMessage);
-        const disambiguationTopic = pendingDisambiguation.topic;
-        console.log('[Chat] 📊 Disambiguation choice:', choice, '| Topic:', JSON.stringify(disambiguationTopic));
+      // PRIORITY 1: Handle pending lead field (bypasses ALL intent/topic logic)
+      if (pendingLeadField) {
+        console.log('[LeadFlow] ✨ PENDING LEAD FIELD ACTIVE:', pendingLeadField);
 
-        if (choice === 'pricing' || choice === 'both') {
-          const response = pricingResponder.generatePricingResponse(disambiguationTopic);
-          reply = response.reply;
-          lead = response.lead;
+        if (pendingLeadField === 'name') {
+          // Accept any short text as name
+          const name = sanitizeName(sanitizedMessage);
+          console.log('[LeadFlow] ✅ pending=name resolved, saved name:', name);
 
-          if (choice === 'both') {
-            // Also append inclusions
-            const inclusionsResponse = pricingResponder.generateInclusionsResponse(disambiguationTopic, false);
-            reply += `\n\n**What's included:**\n${inclusionsResponse.reply}`;
-          }
-        } else if (choice === 'inclusions') {
-          const response = pricingResponder.generateInclusionsResponse(disambiguationTopic, false);
-          reply = response.reply;
-          lead = response.lead;
-        } else {
-          // Shouldn't happen, but fallback
-          reply = "I can share pricing, what's included, or both—which would you like?";
-          metadata.pendingDisambiguation = { topic: disambiguationTopic, askedAt: new Date() };
-        }
-      }
-      // Handle buy intent
-      else if (intent === 'buy') {
-        console.log('[Chat] ✓ BUY INTENT DETECTED - Starting lead capture');
-        // Start lead qualification flow
-        if (existingLead && existingLead.name && existingLead.email) {
-          // Already qualified - show contact options
-          reply = "Great! How would you like to move forward?\n\n{{BTN_MEETING}}\n{{BTN_WHATSAPP}}\n{{BTN_TELEGRAM}}\n{{BTN_CONTACT_FORM}}\n{{BTN_CALL_US}}";
-        } else if (existingLead && existingLead.name) {
-          // Have name, need email
+          lead = enhanceLeadFromTopic(null, {}, existingLead);
+          lead.name = name;
+
+          // Ask for email next
           reply = "Perfect! What's your email address?";
-        } else {
-          // Start from scratch
-          reply = "Excellent! Let's get started. What's your name?";
-        }
-        lead = enhanceLeadFromTopic(null, topic, existingLead);
-        if (topic.package || topic.division) {
-          lead.notes = lead.notes ? `${lead.notes}; Ready to buy` : 'Ready to buy';
-        }
-      }
-      // Check for contact method selection
-      else if (detectContactMethodSelection(sanitizedMessage) && existingLead && (existingLead.name || existingLead.email)) {
-        const selectedContact = detectContactMethodSelection(sanitizedMessage)!;
-        console.log('[Chat] ✓ DETERMINISTIC CONTACT METHOD SELECTION');
-        const buttonMap: Record<string, string> = {
-          'telegram': '{{BTN_TELEGRAM}}',
-          'whatsapp': '{{BTN_WHATSAPP}}',
-          'meeting': '{{BTN_MEETING}}',
-          'contact_form': '{{BTN_CONTACT_FORM}}',
-          'call': '{{BTN_CALL_US}}'
-        };
-        const contactName = selectedContact.charAt(0).toUpperCase() + selectedContact.slice(1).replace('_', ' ');
-        reply = `Tap the ${contactName} button below.\n\n${buttonMap[selectedContact]}`;
-        lead = enhanceLeadFromTopic(null, topic, existingLead);
-        lead.preferred_contact_channel = selectedContact;
-      }
-      // Route based on intent
-      else if (intent === 'pricing') {
-        // Deterministic pricing response (NO LLM)
-        console.log('[Chat] ✓ DETERMINISTIC PRICING PATH (no LLM call)');
-        const response = pricingResponder.generatePricingResponse(topic);
-        reply = response.reply;
-        lead = response.lead;
-      } else if (intent === 'inclusions') {
-        // Deterministic inclusions response (NO LLM)
-        console.log('[Chat] ✓ DETERMINISTIC INCLUSIONS PATH (no LLM call)');
+          metadata.pendingLeadField = 'email';
 
-        // Handle "and the other?" for packages
-        if (isMultiplePackages && topic.package) {
-          // Get other packages in same division
-          const otherPackages = intentService.getOtherPackages(topic);
-          if (otherPackages.length > 0) {
-            // Show the first/only other package
-            const otherTopic = otherPackages[0];
-            const response = pricingResponder.generateInclusionsResponse(otherTopic, false);
+        } else if (pendingLeadField === 'email') {
+          // Validate email
+          const email = sanitizedMessage.trim();
+
+          if (isValidEmail(email)) {
+            console.log('[LeadFlow] ✅ pending=email resolved, saved email:', email);
+
+            lead = enhanceLeadFromTopic(null, {}, existingLead);
+            lead.email = email;
+
+            // Show contact options
+            reply = "Great! How would you like to move forward?\n\n{{BTN_MEETING}}\n{{BTN_WHATSAPP}}\n{{BTN_TELEGRAM}}\n{{BTN_CONTACT_FORM}}\n{{BTN_CALL_US}}";
+            metadata.pendingLeadField = 'contact_choice';
+
+          } else {
+            console.log('[LeadFlow] ❌ Invalid email format:', email);
+
+            // Ask again
+            reply = "That doesn't look like a valid email. Please enter your email address (e.g., name@company.com).";
+            metadata.pendingLeadField = 'email'; // Keep pending
+            lead = enhanceLeadFromTopic(null, {}, existingLead);
+          }
+
+        } else if (pendingLeadField === 'budget') {
+          // Normalize budget to categories
+          const budgetInput = sanitizedMessage.trim();
+          const normalizedBudget = normalizeBudgetRange(budgetInput);
+
+          console.log('[LeadFlow] ✅ pending=budget resolved, normalized to:', normalizedBudget);
+
+          lead = enhanceLeadFromTopic(null, {}, existingLead);
+          lead.budget_range = normalizedBudget;
+
+          // Add raw budget to notes
+          if (budgetInput !== normalizedBudget) {
+            const budgetNote = `Budget mentioned: ${budgetInput}`;
+            lead.notes = lead.notes ? `${lead.notes}; ${budgetNote}` : budgetNote;
+          }
+
+          // Continue to next field (usually name or email)
+          if (!existingLead?.name) {
+            reply = "Thanks! What's your name?";
+            metadata.pendingLeadField = 'name';
+          } else if (!existingLead?.email) {
+            reply = "Thanks! What's your email address?";
+            metadata.pendingLeadField = 'email';
+          } else {
+            reply = "Great! How would you like to move forward?\n\n{{BTN_MEETING}}\n{{BTN_WHATSAPP}}\n{{BTN_TELEGRAM}}\n{{BTN_CONTACT_FORM}}\n{{BTN_CALL_US}}";
+            metadata.pendingLeadField = 'contact_choice';
+          }
+
+        } else if (pendingLeadField === 'contact_choice') {
+          // Handle contact method selection
+          const selectedContact = detectContactMethodSelection(sanitizedMessage);
+
+          if (selectedContact) {
+            console.log('[LeadFlow] ✅ pending=contact_choice resolved, selected:', selectedContact);
+
+            const buttonMap: Record<string, string> = {
+              'telegram': '{{BTN_TELEGRAM}}',
+              'whatsapp': '{{BTN_WHATSAPP}}',
+              'meeting': '{{BTN_MEETING}}',
+              'contact_form': '{{BTN_CONTACT_FORM}}',
+              'call': '{{BTN_CALL_US}}'
+            };
+
+            const contactName = selectedContact.charAt(0).toUpperCase() + selectedContact.slice(1).replace('_', ' ');
+            reply = `Tap the ${contactName} button below.\n\n${buttonMap[selectedContact]}`;
+
+            lead = enhanceLeadFromTopic(null, {}, existingLead);
+            lead.preferred_contact_channel = selectedContact;
+            // No more pending field
+
+          } else {
+            // User didn't select a valid contact method
+            console.log('[LeadFlow] ❌ Invalid contact choice, re-asking');
+            reply = "Please choose one: Meeting, WhatsApp, Telegram, Contact Form, or Call Us.";
+            metadata.pendingLeadField = 'contact_choice'; // Keep pending
+            lead = enhanceLeadFromTopic(null, {}, existingLead);
+          }
+        }
+      }
+      // PRIORITY 2+: Normal intent/topic routing
+      else {
+        // Detect intent and topic
+        console.log('[Chat] Step 4: Detect intent...');
+        intent = intentService.detectIntent(sanitizedMessage, !!pendingDisambiguation);
+        topic = intentService.extractTopic(sanitizedMessage, recentMessages, lastIntent || undefined);
+        const isMultiplePackages = intentService.detectMultiplePackages(sanitizedMessage);
+        console.log('[Chat] Intent:', intent, '| Topic:', JSON.stringify(topic), '| Multiple:', isMultiplePackages);
+        console.log('[Chat] Last Intent:', lastIntent, '| Pending Disambiguation:', !!pendingDisambiguation);
+
+        metadata.intent = intent;
+
+        // Handle disambiguation resolution (highest priority after pending state check)
+        if (intent === 'disambiguation_resolution' && pendingDisambiguation) {
+          console.log('[Chat] ✓ RESOLVING PENDING DISAMBIGUATION');
+          const choice = intentService.detectDisambiguationResolution(sanitizedMessage);
+          const disambiguationTopic = pendingDisambiguation.topic;
+          console.log('[Chat] 📊 Disambiguation choice:', choice, '| Topic:', JSON.stringify(disambiguationTopic));
+
+          if (choice === 'pricing' || choice === 'both') {
+            const response = pricingResponder.generatePricingResponse(disambiguationTopic);
+            reply = response.reply;
+            lead = response.lead;
+
+            if (choice === 'both') {
+              // Also append inclusions
+              const inclusionsResponse = pricingResponder.generateInclusionsResponse(disambiguationTopic, false);
+              reply += `\n\n**What's included:**\n${inclusionsResponse.reply}`;
+            }
+          } else if (choice === 'inclusions') {
+            const response = pricingResponder.generateInclusionsResponse(disambiguationTopic, false);
             reply = response.reply;
             lead = response.lead;
           } else {
-            // Fallback to normal inclusions
+            // Shouldn't happen, but fallback
+            reply = "I can share pricing, what's included, or both—which would you like?";
+            metadata.pendingDisambiguation = { topic: disambiguationTopic, askedAt: new Date() };
+          }
+        }
+        // Handle buy intent
+        if (intent === 'buy') {
+          console.log('[Chat] ✓ BUY INTENT DETECTED - Starting lead capture');
+          // Start lead qualification flow
+          lead = enhanceLeadFromTopic(null, topic, existingLead);
+
+          if (topic.package || topic.division) {
+            lead.notes = lead.notes ? `${lead.notes}; Ready to buy` : 'Ready to buy';
+          }
+
+          if (existingLead && existingLead.name && existingLead.email) {
+            // Already qualified - show contact options
+            reply = "Great! How would you like to move forward?\n\n{{BTN_MEETING}}\n{{BTN_WHATSAPP}}\n{{BTN_TELEGRAM}}\n{{BTN_CONTACT_FORM}}\n{{BTN_CALL_US}}";
+            metadata.pendingLeadField = 'contact_choice';
+          } else if (existingLead && existingLead.name) {
+            // Have name, need email
+            reply = "Perfect! What's your email address?";
+            metadata.pendingLeadField = 'email';
+          } else {
+            // Start from scratch
+            reply = "Excellent! Let's get started. What's your name?";
+            metadata.pendingLeadField = 'name';
+          }
+        }
+        // Check for contact method selection
+        else if (detectContactMethodSelection(sanitizedMessage) && existingLead && (existingLead.name || existingLead.email)) {
+          const selectedContact = detectContactMethodSelection(sanitizedMessage)!;
+          console.log('[Chat] ✓ DETERMINISTIC CONTACT METHOD SELECTION');
+          const buttonMap: Record<string, string> = {
+            'telegram': '{{BTN_TELEGRAM}}',
+            'whatsapp': '{{BTN_WHATSAPP}}',
+            'meeting': '{{BTN_MEETING}}',
+            'contact_form': '{{BTN_CONTACT_FORM}}',
+            'call': '{{BTN_CALL_US}}'
+          };
+          const contactName = selectedContact.charAt(0).toUpperCase() + selectedContact.slice(1).replace('_', ' ');
+          reply = `Tap the ${contactName} button below.\n\n${buttonMap[selectedContact]}`;
+          lead = enhanceLeadFromTopic(null, topic, existingLead);
+          lead.preferred_contact_channel = selectedContact;
+        }
+        // Route based on intent
+        else if (intent === 'pricing') {
+          // Deterministic pricing response (NO LLM)
+          console.log('[Chat] ✓ DETERMINISTIC PRICING PATH (no LLM call)');
+          const response = pricingResponder.generatePricingResponse(topic);
+          reply = response.reply;
+          lead = response.lead;
+        } else if (intent === 'inclusions') {
+          // Deterministic inclusions response (NO LLM)
+          console.log('[Chat] ✓ DETERMINISTIC INCLUSIONS PATH (no LLM call)');
+          const isMultiplePackages = intentService.detectMultiplePackages(sanitizedMessage);
+
+          // Handle "and the other?" for packages
+          if (isMultiplePackages && topic.package) {
+            // Get other packages in same division
+            const otherPackages = intentService.getOtherPackages(topic);
+            if (otherPackages.length > 0) {
+              // Show the first/only other package
+              const otherTopic = otherPackages[0];
+              const response = pricingResponder.generateInclusionsResponse(otherTopic, false);
+              reply = response.reply;
+              lead = response.lead;
+            } else {
+              // Fallback to normal inclusions
+              const response = pricingResponder.generateInclusionsResponse(topic, isMultiplePackages);
+              reply = response.reply;
+              lead = response.lead;
+            }
+          } else {
             const response = pricingResponder.generateInclusionsResponse(topic, isMultiplePackages);
             reply = response.reply;
             lead = response.lead;
           }
-        } else {
-          const response = pricingResponder.generateInclusionsResponse(topic, isMultiplePackages);
+        } else if (intent === 'budget_confirmation') {
+          // Budget confirmation - acknowledge and move forward
+          console.log('[Chat] ✓ DETERMINISTIC BUDGET CONFIRMATION (no LLM call)');
+          reply = "Perfect! Let's move forward. What's your name?";
+          metadata.pendingLeadField = 'name';
+          lead = {
+            name: undefined,
+            email: undefined,
+            phone: undefined,
+            business_type: undefined,
+            company_name: undefined,
+            interest_area: topic.package || topic.division,
+            budget_range: undefined, // Will be set from last pricing discussion
+            preferred_contact_channel: undefined,
+            notes: 'Budget confirmed'
+          };
+        } else if (intent === 'definition') {
+          // Definition query - explain what X is
+          console.log('[Chat] ✓ DETERMINISTIC DEFINITION PATH (no LLM call)');
+          const response = pricingResponder.generateDefinitionResponse(topic);
           reply = response.reply;
           lead = response.lead;
-        }
-      } else if (intent === 'budget_confirmation') {
-        // Budget confirmation - acknowledge and move forward
-        console.log('[Chat] ✓ DETERMINISTIC BUDGET CONFIRMATION (no LLM call)');
-        reply = "Perfect! Let's move forward. What's your name?";
-        lead = {
-          name: undefined,
-          email: undefined,
-          phone: undefined,
-          business_type: undefined,
-          company_name: undefined,
-          interest_area: topic.package || topic.division,
-          budget_range: undefined, // Will be set from last pricing discussion
-          preferred_contact_channel: undefined,
-          notes: 'Budget confirmed'
-        };
-      } else if (intent === 'definition') {
-        // Definition query - explain what X is
-        console.log('[Chat] ✓ DETERMINISTIC DEFINITION PATH (no LLM call)');
-        const response = pricingResponder.generateDefinitionResponse(topic);
-        reply = response.reply;
-        lead = response.lead;
-      } else if (intent === 'billing_cadence') {
-        // Billing cadence question - one-time vs monthly
-        console.log('[Chat] ✓ DETERMINISTIC BILLING CADENCE PATH (no LLM call)');
-        const response = pricingResponder.generateBillingCadenceResponse(topic);
-        reply = response.reply;
-        lead = response.lead;
-      } else {
-        // CRM Disambiguation: if topic is identified but intent is general, ask clarifying question
-        // BUT: if last intent was pricing and message is "and for X?", prefer pricing (not disambiguation)
-        const isAndForPattern = /\b(and|what about) (for |about )/i.test(sanitizedMessage);
-        const shouldDisambiguate = topic.package && !hasPricingIntent(sanitizedMessage) &&
-                                    !(isAndForPattern && lastIntent === 'pricing');
+        } else if (intent === 'billing_cadence') {
+          // Billing cadence question - one-time vs monthly
+          console.log('[Chat] ✓ DETERMINISTIC BILLING CADENCE PATH (no LLM call)');
+          const response = pricingResponder.generateBillingCadenceResponse(topic);
+          reply = response.reply;
+          lead = response.lead;
+        } else {
+          // CRM Disambiguation: if topic is identified but intent is general, ask clarifying question
+          // BUT: if last intent was pricing and message is "and for X?", prefer pricing (not disambiguation)
+          const isAndForPattern = /\b(and|what about) (for |about )/i.test(sanitizedMessage);
+          const shouldDisambiguate = topic.package && !hasPricingIntent(sanitizedMessage) &&
+                                      !(isAndForPattern && lastIntent === 'pricing');
 
-        if (shouldDisambiguate) {
-          console.log('[Chat] ✓ DETERMINISTIC DISAMBIGUATION (topic identified but no pricing intent)');
-          const division = topic.division ? PRICING_DATA[topic.division] : null;
-          const pkg = division?.packages.find(p => p.id === topic.package);
-          if (pkg) {
-            reply = `${pkg.name} helps with ${getPackageShortDescription(topic.package)}. Do you want pricing or what's included?`;
-            lead = enhanceLeadFromTopic(null, topic, existingLead);
-            // Store pending disambiguation state
-            metadata.pendingDisambiguation = { topic, askedAt: new Date() };
-            console.log('[Chat] 💾 PENDING DISAMBIGUATION STATE STORED:', JSON.stringify(topic));
+          if (shouldDisambiguate) {
+            console.log('[Chat] ✓ DETERMINISTIC DISAMBIGUATION (topic identified but no pricing intent)');
+            const division = topic.division ? PRICING_DATA[topic.division] : null;
+            const pkg = division?.packages.find(p => p.id === topic.package);
+            if (pkg) {
+              reply = `${pkg.name} helps with ${getPackageShortDescription(topic.package)}. Do you want pricing or what's included?`;
+              lead = enhanceLeadFromTopic(null, topic, existingLead);
+              // Store pending disambiguation state
+              metadata.pendingDisambiguation = { topic, askedAt: new Date() };
+              console.log('[Chat] 💾 PENDING DISAMBIGUATION STATE STORED:', JSON.stringify(topic));
+            } else {
+              // Fallback to LLM
+              reply = await handleLLMPath();
+            }
+          } else if (isAndForPattern && lastIntent === 'pricing' && topic.package) {
+            // "and for X?" after pricing context → show pricing
+            console.log('[Chat] ✓ DETERMINISTIC PRICING PATH (and for X after pricing context)');
+            const response = pricingResponder.generatePricingResponse(topic);
+            reply = response.reply;
+            lead = response.lead;
           } else {
-            // Fallback to LLM
+            // General query - use LLM with knowledge base
             reply = await handleLLMPath();
           }
-        } else if (isAndForPattern && lastIntent === 'pricing' && topic.package) {
-          // "and for X?" after pricing context → show pricing
-          console.log('[Chat] ✓ DETERMINISTIC PRICING PATH (and for X after pricing context)');
-          const response = pricingResponder.generatePricingResponse(topic);
-          reply = response.reply;
-          lead = response.lead;
-        } else {
-          // General query - use LLM with knowledge base
-          reply = await handleLLMPath();
         }
       }
 

@@ -14,6 +14,11 @@ export interface PendingDisambiguation {
 }
 
 /**
+ * Pending lead field type - tracks what info we're waiting for
+ */
+export type PendingLeadField = 'name' | 'email' | 'budget' | 'contact_choice';
+
+/**
  * Disambiguation resolution type
  */
 export type DisambiguationChoice = 'pricing' | 'inclusions' | 'both';
