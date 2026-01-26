@@ -97,9 +97,9 @@ export const PRICING_DATA: Record<string, Division> = {
         price: 49,
         recurring: 'monthly',
         inclusions: [
-          'Weekly 1:1 coaching sessions',
           'Tutorials, prompt libraries, community',
-          'Access to all workshops & trainings'
+          'Access to all workshops & trainings',
+          'Monthly group Q&A calls'
         ]
       },
       {
@@ -108,9 +108,9 @@ export const PRICING_DATA: Record<string, Division> = {
         price: 149,
         recurring: 'monthly',
         inclusions: [
+          'Weekly 1:1 coaching sessions',
           'Personal AI strategy consultation',
           'Priority access to new tools',
-          'Monthly expert Q&A calls',
           'Everything in Masterminds'
         ]
       }

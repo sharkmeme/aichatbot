@@ -140,8 +140,7 @@ CRITICAL: You already have this information. DO NOT ask for any of these fields 
       // Remove the LEAD_JSON block from the reply
       reply = content.replace(/LEAD_JSON:\s*\{[\s\S]*?\}/g, '').trim();
     } else {
-      console.warn('[OpenAI] WARNING: Response did not contain LEAD_JSON (model may not be following instructions)');
-      console.warn('[OpenAI] Response preview:', content.substring(0, 200));
+      console.log('[OpenAI] Note: Response did not contain LEAD_JSON (will use server-side generation)');
     }
 
     return { reply, lead };

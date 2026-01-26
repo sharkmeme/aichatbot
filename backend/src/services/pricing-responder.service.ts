@@ -187,6 +187,7 @@ export class PricingResponderService {
 
   /**
    * Estimate budget range based on package price
+   * For VIP and pre-built offers, use exact price
    */
   private estimateBudgetRange(pkg: Package): string | undefined {
     if (pkg.price === 'custom') {
@@ -194,6 +195,13 @@ export class PricingResponderService {
     }
 
     if (typeof pkg.price === 'number') {
+      // For VIP packages (< $200/mo) and pre-built offers, use exact price
+      if (pkg.price < 200 || pkg.recurring === 'one-time') {
+        const formattedPrice = formatPrice(pkg.price, pkg.recurring);
+        return formattedPrice;
+      }
+
+      // For larger packages, use ranges
       if (pkg.price < 500) {
         return '<$500';
       } else if (pkg.price < 1000) {

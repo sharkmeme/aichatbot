@@ -15,6 +15,38 @@ const intentService = new IntentService();
 const pricingResponder = new PricingResponderService();
 
 /**
+ * Generate or enhance lead data from topic and existing lead
+ */
+function enhanceLeadFromTopic(
+  lead: Lead | null,
+  topic: { division?: string; package?: string },
+  existingLead: Lead | null
+): Lead {
+  const enhanced: Lead = {
+    name: lead?.name || existingLead?.name,
+    email: lead?.email || existingLead?.email,
+    phone: lead?.phone || existingLead?.phone,
+    business_type: lead?.business_type || existingLead?.business_type,
+    company_name: lead?.company_name || existingLead?.company_name,
+    interest_area: lead?.interest_area || existingLead?.interest_area,
+    budget_range: lead?.budget_range || existingLead?.budget_range,
+    preferred_contact_channel: lead?.preferred_contact_channel || existingLead?.preferred_contact_channel,
+    notes: lead?.notes || existingLead?.notes
+  };
+
+  // Auto-set interest_area from topic if not already set
+  if (!enhanced.interest_area && (topic.package || topic.division)) {
+    if (topic.package) {
+      enhanced.interest_area = topic.package;
+    } else if (topic.division) {
+      enhanced.interest_area = topic.division;
+    }
+  }
+
+  return enhanced;
+}
+
+/**
  * POST /api/chat
  * Main chat endpoint
  */
@@ -78,6 +110,21 @@ router.post(
         const response = pricingResponder.generateInclusionsResponse(topic, isMultiplePackages);
         reply = response.reply;
         lead = response.lead;
+      } else if (intent === 'budget_confirmation') {
+        // Budget confirmation - acknowledge and move forward
+        console.log('[Chat] ✓ DETERMINISTIC BUDGET CONFIRMATION (no LLM call)');
+        reply = "Perfect! Let's move forward. What's your name?";
+        lead = {
+          name: undefined,
+          email: undefined,
+          phone: undefined,
+          business_type: undefined,
+          company_name: undefined,
+          interest_area: topic.package || topic.division,
+          budget_range: undefined, // Will be set from last pricing discussion
+          preferred_contact_channel: undefined,
+          notes: 'Budget confirmed'
+        };
       } else {
         // General query - use LLM with knowledge base
         console.log('[Chat] → LLM PATH (general query)');
@@ -110,22 +157,15 @@ router.post(
           reply = "I can share exact package pricing—which division interests you: Studios / Bunny Code / Honey Software / VIP?";
           // Keep the lead data from LLM if present
         }
+
+        // Enhance lead with server-side topic tracking
+        lead = enhanceLeadFromTopic(lead, topic, existingLead);
       }
 
-      // Enforce LEAD_JSON (must always be present)
+      // Ensure lead always has a value (server-side generation)
       if (!lead) {
-        console.log('[Chat] ⚠️  No LEAD_JSON - generating default');
-        lead = {
-          name: undefined,
-          email: undefined,
-          phone: undefined,
-          business_type: undefined,
-          company_name: undefined,
-          interest_area: undefined,
-          budget_range: undefined,
-          preferred_contact_channel: undefined,
-          notes: undefined
-        };
+        console.log('[Chat] Generating lead from topic and existing data');
+        lead = enhanceLeadFromTopic(null, topic, existingLead);
       }
 
       console.log('[Chat] AI response generated');

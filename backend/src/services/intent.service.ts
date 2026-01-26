@@ -1,7 +1,7 @@
 import { Message } from '../types';
 import { PRICING_DATA } from '../data/pricing';
 
-export type Intent = 'pricing' | 'inclusions' | 'general';
+export type Intent = 'pricing' | 'inclusions' | 'budget_confirmation' | 'general';
 
 export interface ConversationTopic {
   division?: string; // studios, vip, code, software
@@ -19,13 +19,49 @@ export class IntentService {
    * Detect the primary intent of a user message
    */
   detectIntent(message: string): Intent {
-    const normalized = message.toLowerCase();
+    const normalized = message.toLowerCase().trim();
+
+    // Budget confirmation patterns
+    const budgetConfirmations = [
+      /\b(that|the|this) (price|cost|budget|amount) (is|works|sounds|seems) (good|fine|ok|okay|perfect|great)\b/,
+      /\b(price|budget|cost) (you )?mentioned (is|works)\b/,
+      /\bmy budget\b/,
+      /\bi (can|could) (afford|do) (that|it)\b/
+    ];
+
+    for (const pattern of budgetConfirmations) {
+      if (pattern.test(normalized)) {
+        return 'budget_confirmation';
+      }
+    }
+
+    // "And the other" / "both packages" patterns (inclusions)
+    if (/\b(and |what about )?(the )?(other|another)( one| package| plan)?\b/.test(normalized) ||
+        /\bboth (packages|plans|tiers)\b/.test(normalized)) {
+      return 'inclusions';
+    }
+
+    // Exact package/offer name match (treat as pricing request)
+    const packageNames = [
+      'starter', 'growth', 'content engine', 'studio partner',
+      'masterminds', 'fast track',
+      'lead intake', 'crm', 'ai outreach', 'outreach', 'support ticket',
+      'chat assistant', 'chatbot', 'phone support'
+    ];
+
+    for (const pkgName of packageNames) {
+      // If message is just the package name (with minimal extra words)
+      if (normalized === pkgName || normalized === `${pkgName}?` ||
+          normalized === `the ${pkgName}` || normalized === `${pkgName} package`) {
+        return 'pricing';
+      }
+    }
 
     // Pricing intent keywords
     const pricingKeywords = [
       'price', 'pricing', 'prices', 'cost', 'costs', 'how much',
       'package', 'packages', 'plan', 'plans', 'tier', 'tiers',
-      'rate', 'rates', 'fee', 'fees', 'budget', 'monthly', 'per month',
+      'rate', 'rates', 'fee', 'fees', 'monthly', 'per month',
       'what does it cost', 'how expensive'
     ];
 
@@ -33,8 +69,8 @@ export class IntentService {
     const inclusionsKeywords = [
       'included', 'includes', 'include', 'what do i get', 'what do you get',
       "what's in", 'features', 'feature', 'benefits', 'benefit',
-      'what comes with', 'comes with', 'get with', 'both packages',
-      'both plans', 'in both', 'details', 'breakdown'
+      'what comes with', 'comes with', 'get with',
+      'details', 'breakdown'
     ];
 
     // Check for inclusions intent first (more specific)
@@ -186,6 +222,33 @@ export class IntentService {
    */
   detectMultiplePackages(message: string): boolean {
     const normalized = message.toLowerCase();
-    return /\b(both|all|each)\s+(package|plan|tier)s?\b/i.test(normalized);
+    return /\b(both|all|each)\s+(package|plan|tier)s?\b/i.test(normalized) ||
+           /\b(and |what about )?(the )?(other|another)( one| package| plan)?\b/.test(normalized);
+  }
+
+  /**
+   * Get the "other" packages in a division (for "and the other?" queries)
+   * Returns packages from the same division, excluding the one just discussed
+   */
+  getOtherPackages(topic: ConversationTopic): ConversationTopic[] {
+    if (!topic.division) {
+      return [];
+    }
+
+    // If we have a specific package, return others in same division
+    if (topic.package) {
+      const division = PRICING_DATA[topic.division];
+      if (!division) return [];
+
+      return division.packages
+        .filter(pkg => pkg.id !== topic.package)
+        .map(pkg => ({
+          division: topic.division,
+          package: pkg.id
+        }));
+    }
+
+    // If just division, return all packages
+    return [];
   }
 }
