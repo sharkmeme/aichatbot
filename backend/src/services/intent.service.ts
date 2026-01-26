@@ -1,5 +1,6 @@
 import { Message } from '../types';
 import { PRICING_DATA } from '../data/pricing';
+import { fuzzyMatch } from '../utils/fuzzy';
 
 export type Intent = 'pricing' | 'inclusions' | 'budget_confirmation' | 'definition' | 'billing_cadence' | 'buy' | 'disambiguation_resolution' | 'general';
 
@@ -22,6 +23,23 @@ export type PendingLeadField = 'name' | 'email' | 'budget' | 'contact_choice';
  * Disambiguation resolution type
  */
 export type DisambiguationChoice = 'pricing' | 'inclusions' | 'both';
+
+/**
+ * Package aliases for fuzzy matching and typo tolerance
+ */
+const PACKAGE_ALIASES: Record<string, string[]> = {
+  'starter': ['starter', 'start'],
+  'growth': ['growth', 'grow'],
+  'content-engine': ['content engine', 'pipeline', 'engine', 'content'],
+  'studio-partner': ['studio partner', 'partner', 'studios partner'],
+  'masterminds': ['masterminds', 'mastermind', 'group coaching'],
+  'fast-track': ['fast track', 'fast-track', '1 on 1', 'one on one', 'coaching'],
+  'lead-intake-crm': ['crm', 'crm system', 'lead intake', 'lead crm', 'customer relationship'],
+  'ai-outreach': ['outreach', 'ai outreach', 'follow up', 'followup', 'outreach system'],
+  'support-ticket': ['ticket', 'support ticket', 'ticketing', 'ticket system', 'support'],
+  'chat-assistant': ['chatbot', 'chat assistant', 'chat bot', 'website chat', 'chat'],
+  'phone-support': ['phone', 'phone support', 'call support', 'voice']
+};
 
 /**
  * Intent Detection and Conversation Topic Tracking
@@ -180,10 +198,15 @@ export class IntentService {
 
   /**
    * Detect disambiguation resolution choice
-   * Returns 'pricing', 'inclusions', 'both', or null if not a resolution
+   * Returns 'pricing', 'inclusions', 'both', or null if not a resolution/cancel
    */
   detectDisambiguationResolution(message: string): DisambiguationChoice | null {
     const normalized = message.toLowerCase().trim();
+
+    // Cancel/ignore patterns - return null to clear pending state
+    if (/^(no|cancel|skip|nevermind|never mind)$/i.test(normalized)) {
+      return null;
+    }
 
     // Explicit pricing choice
     if (/^(price|pricing|cost|how much)\??$/i.test(normalized) ||
@@ -202,12 +225,17 @@ export class IntentService {
       return 'both';
     }
 
-    // Yes = default to both (or pricing if last context was pricing)
+    // Yes = default to both
     if (/^(yes|yeah|yep|sure|ok|okay|please)$/i.test(normalized)) {
       return 'both';
     }
 
-    // No = ignore, treat as general
+    // If user asks a new question, return null (don't treat as disambiguation)
+    if (/^(what|how|when|where|why|who|can|do|is|are|tell|show)\b/i.test(normalized)) {
+      return null;
+    }
+
+    // No match - likely a new question
     return null;
   }
 
@@ -268,59 +296,12 @@ export class IntentService {
       topic.division = 'software';
     }
 
-    // Package detection (specific packages)
-    // Studios packages
-    if (/\bstarter\b/i.test(normalized)) {
-      topic.package = 'starter';
-      topic.division = 'studios';
-    } else if (/\bgrowth\b/i.test(normalized)) {
-      topic.package = 'growth';
-      topic.division = 'studios';
-    } else if (/\bcontent engine\b/i.test(normalized)) {
-      topic.package = 'content-engine';
-      topic.division = 'studios';
-    } else if (/\bstudio partner\b/i.test(normalized)) {
-      topic.package = 'studio-partner';
-      topic.division = 'studios';
-    }
-    // VIP packages
-    else if (/\bmasterminds?\b/i.test(normalized)) {
-      topic.package = 'masterminds';
-      topic.division = 'vip';
-    } else if (/\bfast track\b/i.test(normalized)) {
-      topic.package = 'fast-track';
-      topic.division = 'vip';
-    }
-    // Bunny Code packages
-    else if (/\b(lead intake|crm automation|lead.*crm)\b/i.test(normalized)) {
-      topic.package = 'lead-intake-crm';
-      topic.division = 'code';
-    } else if (/\bcrm\b/i.test(normalized) && !/outreach/i.test(normalized)) {
-      // "crm" alone (not in "crm updates from outreach")
-      topic.package = 'lead-intake-crm';
-      topic.division = 'code';
-    } else if (/\b(ai outreach|outreach system|follow.?up system)\b/i.test(normalized)) {
-      topic.package = 'ai-outreach';
-      topic.division = 'code';
-    } else if (/\boutreach\b/i.test(normalized) && !/automation/i.test(normalized)) {
-      // "outreach" alone
-      topic.package = 'ai-outreach';
-      topic.division = 'code';
-    } else if (/\b(support ticket|ticket automation|ticket system)\b/i.test(normalized)) {
-      topic.package = 'support-ticket';
-      topic.division = 'code';
-    } else if (/\bticket/i.test(normalized)) {
-      topic.package = 'support-ticket';
-      topic.division = 'code';
-    } else if (/\b(chat assistant|website chat)\b/i.test(normalized)) {
-      topic.package = 'chat-assistant';
-      topic.division = 'code';
-    } else if (/\bchatbot\b/i.test(normalized)) {
-      topic.package = 'chat-assistant';
-      topic.division = 'code';
-    } else if (/\b(phone support|voice assistant|call support)\b/i.test(normalized)) {
-      topic.package = 'phone-support';
-      topic.division = 'code';
+    // Package detection with fuzzy matching and aliases
+    const packageMatch = this.detectPackageFromAliases(normalized);
+    if (packageMatch) {
+      topic.package = packageMatch.packageId;
+      topic.division = packageMatch.division;
+      console.log('[Intent] Package detected via alias/fuzzy match:', packageMatch.packageId, 'confidence:', packageMatch.confidence);
     }
 
     // If no topic found in current message and message is vague, check recent messages
@@ -423,5 +404,72 @@ export class IntentService {
 
     // If just division, return all packages
     return [];
+  }
+
+  /**
+   * Detect package from aliases and fuzzy matching
+   * Returns package ID, division, and confidence score
+   */
+  private detectPackageFromAliases(message: string): { packageId: string; division: string; confidence: number } | null {
+    const normalized = message.toLowerCase();
+    let bestMatch: { packageId: string; division: string; confidence: number } | null = null;
+
+    // First try exact alias matches (highest confidence)
+    for (const [packageId, aliases] of Object.entries(PACKAGE_ALIASES)) {
+      for (const alias of aliases) {
+        if (normalized.includes(alias)) {
+          const confidence = alias.length / normalized.length; // Longer match = higher confidence
+          if (!bestMatch || confidence > bestMatch.confidence) {
+            const division = this.getDivisionForPackage(packageId);
+            if (division) {
+              bestMatch = { packageId, division, confidence };
+            }
+          }
+        }
+      }
+    }
+
+    // If exact match found with good confidence, return it
+    if (bestMatch && bestMatch.confidence > 0.3) {
+      return bestMatch;
+    }
+
+    // Try fuzzy matching on individual words (for typos like "ontent engine")
+    const words = normalized.split(/\s+/).filter(w => w.length > 3);
+    for (const word of words) {
+      for (const [packageId, aliases] of Object.entries(PACKAGE_ALIASES)) {
+        for (const alias of aliases) {
+          const aliasWords = alias.split(/\s+/);
+          for (const aliasWord of aliasWords) {
+            if (aliasWord.length < 4) continue;
+
+            const match = fuzzyMatch(word, [aliasWord], 0.75);
+            if (match) {
+              const confidence = match.score * 0.8; // Slightly lower confidence for fuzzy
+              if (!bestMatch || confidence > bestMatch.confidence) {
+                const division = this.getDivisionForPackage(packageId);
+                if (division) {
+                  bestMatch = { packageId, division, confidence };
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    return bestMatch && bestMatch.confidence > 0.5 ? bestMatch : null;
+  }
+
+  /**
+   * Get division for a package ID
+   */
+  private getDivisionForPackage(packageId: string): string | null {
+    for (const [division, data] of Object.entries(PRICING_DATA)) {
+      if (data.packages.some(pkg => pkg.id === packageId)) {
+        return division;
+      }
+    }
+    return null;
   }
 }

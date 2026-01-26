@@ -308,20 +308,30 @@ router.post(
       let topic: ConversationTopic = {};
 
       // PRIORITY 1: Handle pending lead field (bypasses ALL intent/topic logic)
+      let pendingResolved = false;
+
       if (pendingLeadField) {
         console.log('[LeadFlow] ✨ PENDING LEAD FIELD ACTIVE:', pendingLeadField);
 
         if (pendingLeadField === 'name') {
-          // Accept any short text as name
-          const name = sanitizeName(sanitizedMessage);
-          console.log('[LeadFlow] ✅ pending=name resolved, saved name:', name);
+          // Accept any short text as name (unless it's clearly a question)
+          const looksLikeQuestion = /^(what|how|when|where|why|who|can|do|is|are)\b/i.test(sanitizedMessage);
 
-          lead = enhanceLeadFromTopic(null, {}, existingLead);
-          lead.name = name;
+          if (!looksLikeQuestion) {
+            const name = sanitizeName(sanitizedMessage);
+            console.log('[LeadFlow] ✅ pending=name resolved, saved name:', name);
 
-          // Ask for email next
-          reply = "Perfect! What's your email address?";
-          metadata.pendingLeadField = 'email';
+            lead = enhanceLeadFromTopic(null, {}, existingLead);
+            lead.name = name;
+
+            // Ask for email next
+            reply = "Perfect! What's your email address?";
+            metadata.pendingLeadField = 'email';
+            pendingResolved = true;
+          } else {
+            console.log('[LeadFlow] ⚠️  Looks like a question, not a name - clearing pending state');
+            // Fall through to normal routing
+          }
 
         } else if (pendingLeadField === 'email') {
           // Validate email
@@ -336,6 +346,7 @@ router.post(
             // Show contact options
             reply = "Great! How would you like to move forward?\n\n{{BTN_MEETING}}\n{{BTN_WHATSAPP}}\n{{BTN_TELEGRAM}}\n{{BTN_CONTACT_FORM}}\n{{BTN_CALL_US}}";
             metadata.pendingLeadField = 'contact_choice';
+            pendingResolved = true;
 
           } else {
             console.log('[LeadFlow] ❌ Invalid email format:', email);
@@ -344,6 +355,7 @@ router.post(
             reply = "That doesn't look like a valid email. Please enter your email address (e.g., name@company.com).";
             metadata.pendingLeadField = 'email'; // Keep pending
             lead = enhanceLeadFromTopic(null, {}, existingLead);
+            pendingResolved = true;
           }
 
         } else if (pendingLeadField === 'budget') {
@@ -373,9 +385,10 @@ router.post(
             reply = "Great! How would you like to move forward?\n\n{{BTN_MEETING}}\n{{BTN_WHATSAPP}}\n{{BTN_TELEGRAM}}\n{{BTN_CONTACT_FORM}}\n{{BTN_CALL_US}}";
             metadata.pendingLeadField = 'contact_choice';
           }
+          pendingResolved = true;
 
         } else if (pendingLeadField === 'contact_choice') {
-          // Handle contact method selection
+          // Handle contact method selection (NON-BLOCKING)
           const selectedContact = detectContactMethodSelection(sanitizedMessage);
 
           if (selectedContact) {
@@ -394,19 +407,19 @@ router.post(
 
             lead = enhanceLeadFromTopic(null, {}, existingLead);
             lead.preferred_contact_channel = selectedContact;
+            pendingResolved = true;
             // No more pending field
 
           } else {
-            // User didn't select a valid contact method
-            console.log('[LeadFlow] ❌ Invalid contact choice, re-asking');
-            reply = "Please choose one: Meeting, WhatsApp, Telegram, Contact Form, or Call Us.";
-            metadata.pendingLeadField = 'contact_choice'; // Keep pending
-            lead = enhanceLeadFromTopic(null, {}, existingLead);
+            // User asked something else - clear pending and answer normally
+            console.log('[LeadFlow] ⚠️  User asked different question while contact_choice pending - clearing state, answering question');
+            // Don't set pendingResolved, allow fall-through to normal routing
           }
         }
       }
-      // PRIORITY 2+: Normal intent/topic routing
-      else {
+
+      // PRIORITY 2+: Normal intent/topic routing (only if pending wasn't resolved)
+      if (!pendingResolved) {
         // Detect intent and topic
         console.log('[Chat] Step 4: Detect intent...');
         intent = intentService.detectIntent(sanitizedMessage, !!pendingDisambiguation);
@@ -419,29 +432,32 @@ router.post(
 
         // Handle disambiguation resolution (highest priority after pending state check)
         if (intent === 'disambiguation_resolution' && pendingDisambiguation) {
-          console.log('[Chat] ✓ RESOLVING PENDING DISAMBIGUATION');
           const choice = intentService.detectDisambiguationResolution(sanitizedMessage);
           const disambiguationTopic = pendingDisambiguation.topic;
-          console.log('[Chat] 📊 Disambiguation choice:', choice, '| Topic:', JSON.stringify(disambiguationTopic));
 
-          if (choice === 'pricing' || choice === 'both') {
-            const response = pricingResponder.generatePricingResponse(disambiguationTopic);
-            reply = response.reply;
-            lead = response.lead;
-
-            if (choice === 'both') {
-              // Also append inclusions
-              const inclusionsResponse = pricingResponder.generateInclusionsResponse(disambiguationTopic, false);
-              reply += `\n\n**What's included:**\n${inclusionsResponse.reply}`;
-            }
-          } else if (choice === 'inclusions') {
-            const response = pricingResponder.generateInclusionsResponse(disambiguationTopic, false);
-            reply = response.reply;
-            lead = response.lead;
+          if (choice === null) {
+            // User canceled or asked a new question - clear pending and route normally
+            console.log('[Chat] ⚠️  User canceled disambiguation or asked new question - clearing state');
+            // Fall through to normal routing (don't set reply here)
           } else {
-            // Shouldn't happen, but fallback
-            reply = "I can share pricing, what's included, or both—which would you like?";
-            metadata.pendingDisambiguation = { topic: disambiguationTopic, askedAt: new Date() };
+            console.log('[Chat] ✓ RESOLVING PENDING DISAMBIGUATION');
+            console.log('[Chat] 📊 Disambiguation choice:', choice, '| Topic:', JSON.stringify(disambiguationTopic));
+
+            if (choice === 'pricing' || choice === 'both') {
+              const response = pricingResponder.generatePricingResponse(disambiguationTopic);
+              reply = response.reply;
+              lead = response.lead;
+
+              if (choice === 'both') {
+                // Also append inclusions
+                const inclusionsResponse = pricingResponder.generateInclusionsResponse(disambiguationTopic, false);
+                reply += `\n\n**What's included:**\n${inclusionsResponse.reply}`;
+              }
+            } else if (choice === 'inclusions') {
+              const response = pricingResponder.generateInclusionsResponse(disambiguationTopic, false);
+              reply = response.reply;
+              lead = response.lead;
+            }
           }
         }
         // Handle buy intent
@@ -637,6 +653,13 @@ router.post(
 
         // Enhance lead with server-side topic tracking
         lead = enhanceLeadFromTopic(lead, topic, existingLead);
+
+        // If user has name+email but no contact method chosen yet, re-offer buttons
+        if (existingLead && existingLead.name && existingLead.email && !existingLead.preferred_contact_channel && pendingLeadField === 'contact_choice') {
+          console.log('[Chat] ℹ️  User qualified but asked question - appending contact options');
+          llmReply += '\n\nHow would you like to move forward?\n\n{{BTN_MEETING}}\n{{BTN_WHATSAPP}}\n{{BTN_TELEGRAM}}\n{{BTN_CONTACT_FORM}}\n{{BTN_CALL_US}}';
+          metadata.pendingLeadField = 'contact_choice';
+        }
 
         return llmReply;
       }
