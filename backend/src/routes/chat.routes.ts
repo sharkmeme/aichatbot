@@ -36,6 +36,33 @@ function isCompanyInfoQuestion(text: string): boolean {
 }
 
 /**
+ * Filter false registration/setup claims from bot replies
+ * Replaces with safe wording
+ */
+function filterRegistrationClaims(reply: string): string {
+  let filtered = reply;
+
+  // Patterns to replace
+  const registrationPatterns = [
+    { pattern: /I'?ll get you (all )?set up/gi, replacement: 'Next step: choose how to connect' },
+    { pattern: /registration (is )?complete/gi, replacement: 'Info collected' },
+    { pattern: /you'?re (all )?set/gi, replacement: 'Ready to connect' },
+    { pattern: /subscription activated/gi, replacement: 'Next: choose a contact method' },
+    { pattern: /I'?ve (set you up|registered you|activated your)/gi, replacement: 'Info saved. Next step' },
+    { pattern: /account created/gi, replacement: 'Info collected' }
+  ];
+
+  for (const { pattern, replacement } of registrationPatterns) {
+    if (pattern.test(filtered)) {
+      console.log('[Filter] 🚫 Blocked registration claim:', pattern);
+      filtered = filtered.replace(pattern, replacement);
+    }
+  }
+
+  return filtered;
+}
+
+/**
  * Get comparison context from recent bot messages
  * Returns array of package IDs that were recently discussed
  */
@@ -106,6 +133,14 @@ function getLastBotMetadata(recentMessages: Message[]): any | null {
     }
   }
   return null;
+}
+
+/**
+ * Check if bot just asked a proceed question in the last message
+ */
+function botAskedProceed(recentMessages: Message[]): boolean {
+  const metadata = getLastBotMetadata(recentMessages);
+  return metadata?.askedProceed === true;
 }
 
 /**
@@ -341,20 +376,16 @@ function getTopicScopedPrices(topic: ConversationTopic): number[] {
 
 /**
  * Detect if user is selecting a contact method
+ * Returns normalized enum: telegram | whatsapp | meeting | contact_form | call
  */
 function detectContactMethodSelection(message: string): string | null {
   const normalized = message.toLowerCase().trim();
 
-  // Exact matches (high confidence)
-  if (/^(telegram|whatsapp|meeting|contact form|call|phone)$/i.test(normalized)) {
-    return normalized;
-  }
-
-  // Pattern matches
+  // Pattern matches (returns normalized enum values with underscores)
   if (/\b(telegram|tg)\b/i.test(normalized)) return 'telegram';
   if (/\bwhatsapp\b/i.test(normalized)) return 'whatsapp';
   if (/\b(meeting|zoom|calendar|schedule)\b/i.test(normalized)) return 'meeting';
-  if (/\b(form|email|contact form)\b/i.test(normalized)) return 'contact_form';
+  if (/\b(form|email|contact.?form)\b/i.test(normalized)) return 'contact_form';
   if (/\b(call|phone)\b/i.test(normalized)) return 'call';
 
   return null;
@@ -559,6 +590,46 @@ router.post(
         pendingLeadField = null;
       }
 
+      // Initialize response variables
+      let reply: string = "I'm having trouble processing that. Could you rephrase your question?";
+      let lead: Lead | null = null;
+      let metadata: any = {}; // Track metadata
+      let intent: Intent | null = null;
+      let topic: ConversationTopic = {};
+
+      // HANDLE "YES" AS PROCEED: If bot asked "Would you like to proceed?" and user says "yes"
+      const askedProceed = botAskedProceed(recentMessages);
+      const saidYes = /^(yes|yeah|yep|yup|ok|okay|sure|definitely|absolutely)$/i.test(sanitizedMessage.trim());
+      let yesAsProceed = false;
+
+      if (askedProceed && saidYes && !pendingLeadField) {
+        console.log('[LeadFlow] 👍 Bot asked proceed, user said yes - starting lead capture');
+        yesAsProceed = true;
+
+        // Start lead capture based on what we already have
+        if (!existingLead?.name) {
+          reply = "Great! What's your name?";
+          metadata.pendingLeadField = 'name';
+          pendingLeadField = 'name';
+        } else if (!existingLead?.email) {
+          reply = "Perfect! What's your email address?";
+          metadata.pendingLeadField = 'email';
+          pendingLeadField = 'email';
+        } else {
+          // Already have name and email, show contact options
+          reply = "How would you like to move forward?\n\n{{BTN_MEETING}}\n{{BTN_WHATSAPP}}\n{{BTN_TELEGRAM}}\n{{BTN_CONTACT_FORM}}\n{{BTN_CALL_US}}";
+          metadata.pendingLeadField = 'contact_choice';
+          metadata.ctaShown = true;
+          metadata.ctaShownAt = new Date().toISOString();
+          pendingLeadField = 'contact_choice';
+        }
+
+        lead = enhanceLeadFromTopic(null, {}, existingLead);
+      }
+
+      // Skip normal routing if yes-as-proceed was handled
+      let skipNormalRouting = yesAsProceed;
+
       // SERVER-SIDE COMPANY INFO FALLBACK
       // Inject company facts as context if message asks about legal/location
       let companyInfoContext: string | null = null;
@@ -567,12 +638,6 @@ router.post(
         companyInfoContext = `COMPANY FACTS (use this to answer): ${JSON.stringify(companyInfo)}`;
         console.log('[CompanyInfo] 🏢 Detected company/legal/location question - injecting context:', companyInfoContext);
       }
-
-      let reply: string = "I'm having trouble processing that. Could you rephrase your question?";
-      let lead: Lead | null = null;
-      let metadata: any = {}; // Track metadata
-      let intent: Intent | null = null;
-      let topic: ConversationTopic = {};
 
       // PRIORITY 1: Handle pending lead field (bypasses ALL intent/topic logic)
       let pendingResolved = false;
@@ -702,8 +767,16 @@ router.post(
               'call': '{{BTN_CALL_US}}'
             };
 
-            const contactName = selectedContact.charAt(0).toUpperCase() + selectedContact.slice(1).replace('_', ' ');
-            reply = `Tap the ${contactName} button below.\n\n${buttonMap[selectedContact]}`;
+            const buttonToken = buttonMap[selectedContact];
+
+            // Fallback if mapping fails
+            if (!buttonToken) {
+              console.error('[LeadFlow] ⚠️  Button mapping failed for:', selectedContact, '- showing all buttons');
+              reply = "Choose how to connect:\n\n{{BTN_MEETING}}\n{{BTN_WHATSAPP}}\n{{BTN_TELEGRAM}}\n{{BTN_CONTACT_FORM}}\n{{BTN_CALL_US}}";
+            } else {
+              const contactName = selectedContact.charAt(0).toUpperCase() + selectedContact.slice(1).replace('_', ' ');
+              reply = `Tap the ${contactName} button below.\n\n${buttonToken}`;
+            }
 
             lead = enhanceLeadFromTopic(null, {}, existingLead);
             lead.preferred_contact_channel = selectedContact;
@@ -842,8 +915,16 @@ router.post(
             'call': '{{BTN_CALL_US}}'
           };
 
-          const contactName = selectedContact.charAt(0).toUpperCase() + selectedContact.slice(1).replace('_', ' ');
-          reply = `Tap the ${contactName} button below.\n\n${buttonMap[selectedContact]}`;
+          const buttonToken = buttonMap[selectedContact];
+
+          // Fallback if mapping fails
+          if (!buttonToken) {
+            console.error('[Chat] ⚠️  Button mapping failed for:', selectedContact, '- showing all buttons');
+            reply = "Choose how to connect:\n\n{{BTN_MEETING}}\n{{BTN_WHATSAPP}}\n{{BTN_TELEGRAM}}\n{{BTN_CONTACT_FORM}}\n{{BTN_CALL_US}}";
+          } else {
+            const contactName = selectedContact.charAt(0).toUpperCase() + selectedContact.slice(1).replace('_', ' ');
+            reply = `Tap the ${contactName} button below.\n\n${buttonToken}`;
+          }
 
           lead = enhanceLeadFromTopic(null, {}, existingLead);
           lead.preferred_contact_channel = selectedContact;
@@ -852,8 +933,8 @@ router.post(
         }
       }
 
-      // PRIORITY 3+: Normal intent/topic routing with LLM (only if pending wasn't resolved)
-      if (!pendingResolved) {
+      // PRIORITY 3+: Normal intent/topic routing with LLM (only if pending wasn't resolved and not skipping)
+      if (!pendingResolved && !skipNormalRouting) {
         // Detect multi-package requests FIRST
         const multiPackageRequest = detectMultiPackageRequest(sanitizedMessage, recentMessages);
         let requestedPackages: string[] | null = null;
@@ -1120,34 +1201,41 @@ router.post(
 
       console.log('[Chat] AI response generated');
 
-      // Validate LEAD_JSON fields to prevent hallucination
+      // SERVER-OWNED LEAD CAPTURE: Only server controls name, email, contact_choice
+      // Ignore LLM lead updates except for interest_area and notes
       if (lead) {
+        // CRITICAL: Server owns name, email, preferred_contact_channel
+        // Only accept from LLM if we didn't extract it server-side
+        const serverExtractedName = pendingLeadField === 'name' && isPlausibleName(sanitizedMessage);
+        const serverExtractedEmail = pendingLeadField === 'email' && isAttemptedEmail(sanitizedMessage);
+        const serverExtractedContact = pendingLeadField === 'contact_choice' && detectContactMethodSelection(sanitizedMessage);
+
+        // Discard LLM-provided name unless server extracted it
+        if (lead.name && !serverExtractedName) {
+          console.log('[Validation] 🚫 Ignoring LLM-provided name (server-owned field):', lead.name);
+          lead.name = undefined;
+        }
+
+        // Discard LLM-provided email unless server extracted it
+        if (lead.email && !serverExtractedEmail) {
+          console.log('[Validation] 🚫 Ignoring LLM-provided email (server-owned field):', lead.email);
+          lead.email = undefined;
+        }
+
+        // Discard LLM-provided contact channel unless server extracted it
+        if (lead.preferred_contact_channel && !serverExtractedContact) {
+          console.log('[Validation] 🚫 Ignoring LLM-provided preferred_contact_channel (server-owned field):', lead.preferred_contact_channel);
+          lead.preferred_contact_channel = undefined;
+        }
+
         // Reject budget_range unless pendingLeadField === 'budget' OR user message contains explicit budget
         if (lead.budget_range && pendingLeadField !== 'budget' && !hasBudgetSignals(sanitizedMessage)) {
           console.log('[Validation] ⚠️  Rejecting hallucinated budget_range:', lead.budget_range, '- no budget signals in message');
           lead.budget_range = undefined;
         }
 
-        // Normalize and validate preferred_contact_channel
-        if (lead.preferred_contact_channel) {
-          const normalized = lead.preferred_contact_channel.toLowerCase().trim();
-          const validChannels = ['telegram', 'whatsapp', 'meeting', 'contact_form', 'call'];
-
-          if (!validChannels.includes(normalized)) {
-            console.log('[Validation] ⚠️  Invalid preferred_contact_channel:', lead.preferred_contact_channel, '- discarding');
-            lead.preferred_contact_channel = undefined;
-          } else {
-            // Normalize to lowercase
-            lead.preferred_contact_channel = normalized;
-          }
-
-          // Exception: Allow if pendingLeadField was 'contact_choice' (user was prompted)
-          // Otherwise, require explicit mention in user message
-          if (lead.preferred_contact_channel && pendingLeadField !== 'contact_choice' && !hasContactChannelMention(sanitizedMessage)) {
-            console.log('[Validation] ⚠️  Rejecting hallucinated preferred_contact_channel - no channel mention in message');
-            lead.preferred_contact_channel = undefined;
-          }
-        }
+        // Only allow interest_area and notes from LLM (these are safe to track)
+        console.log('[Validation] ✅ Allowing LLM-provided interest_area/notes (safe fields)');
       }
 
       // Upsert lead if we extracted lead data (non-blocking)
@@ -1165,6 +1253,16 @@ router.post(
         console.log('[Chat] Step 5: LEAD_JSON present but all fields null - skipping save');
       } else {
         console.log('[Chat] Step 5: ⚠️  No LEAD_JSON found in response (model not following instructions!)');
+      }
+
+      // Filter false registration claims
+      reply = filterRegistrationClaims(reply);
+
+      // Detect if bot asked a proceed question
+      const proceedPatterns = /\b(would you like to proceed|ready to move forward|ready to get started|want to proceed|interested in moving forward|shall we proceed)\b/i;
+      if (proceedPatterns.test(reply)) {
+        console.log('[LeadFlow] 🎯 Bot asked proceed question - setting askedProceed flag');
+        metadata.askedProceed = true;
       }
 
       // Insert bot message with metadata (intent, lead, pending state)
