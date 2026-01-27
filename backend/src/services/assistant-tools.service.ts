@@ -71,6 +71,20 @@ interface CompanyInfo {
   website: string;
 }
 
+interface PackageComparison {
+  packages: Array<{
+    id: string;
+    division: string;
+    name: string;
+    one_time_price: number | null;
+    monthly_price: number | null;
+    optional_support_monthly: number | null;
+  }>;
+  cheapest_one_time: { id: string; price: number } | null;
+  cheapest_monthly_support: { id: string; price: number } | null;
+  comparison_pairs: Array<{ idA: string; idB: string; diff: number }>;
+}
+
 /**
  * Package and division synonyms for fuzzy matching
  */
@@ -266,6 +280,110 @@ export class AssistantToolsService {
   }
 
   /**
+   * Compare multiple packages with structured pricing data
+   * Use for "which is cheaper", "what's the difference", "compare" questions
+   */
+  compare_packages(packages: string[]): PackageComparison {
+    const packageData: Array<{
+      id: string;
+      division: string;
+      name: string;
+      one_time_price: number | null;
+      monthly_price: number | null;
+      optional_support_monthly: number | null;
+    }> = [];
+
+    // Parse package IDs (format: "division/package")
+    for (const pkgId of packages) {
+      const parts = pkgId.split('/');
+      if (parts.length !== 2) continue;
+
+      const [divisionId, packageId] = parts;
+      const division = PRICING_DATA[divisionId];
+      if (!division) continue;
+
+      const pkg = division.packages.find(p => p.id === packageId);
+      if (!pkg) continue;
+
+      let oneTimePrice: number | null = null;
+      let monthlyPrice: number | null = null;
+      let optionalSupportMonthly: number | null = null;
+
+      // Determine pricing type
+      if (typeof pkg.price === 'number') {
+        if (pkg.recurring === 'monthly') {
+          monthlyPrice = pkg.price;
+        } else {
+          oneTimePrice = pkg.price;
+        }
+      }
+
+      // Add optional support if available
+      if (pkg.optional_support && typeof pkg.optional_support.price === 'number') {
+        if (pkg.optional_support.recurring === 'monthly') {
+          optionalSupportMonthly = pkg.optional_support.price;
+        }
+      }
+
+      packageData.push({
+        id: pkgId,
+        division: divisionId,
+        name: pkg.name,
+        one_time_price: oneTimePrice,
+        monthly_price: monthlyPrice,
+        optional_support_monthly: optionalSupportMonthly
+      });
+    }
+
+    // Find cheapest one-time
+    let cheapestOneTime: { id: string; price: number } | null = null;
+    for (const pkg of packageData) {
+      if (pkg.one_time_price !== null) {
+        if (!cheapestOneTime || pkg.one_time_price < cheapestOneTime.price) {
+          cheapestOneTime = { id: pkg.id, price: pkg.one_time_price };
+        }
+      }
+    }
+
+    // Find cheapest monthly (with support)
+    let cheapestMonthlySupport: { id: string; price: number } | null = null;
+    for (const pkg of packageData) {
+      const supportPrice = pkg.optional_support_monthly;
+      if (supportPrice !== null) {
+        if (!cheapestMonthlySupport || supportPrice < cheapestMonthlySupport.price) {
+          cheapestMonthlySupport = { id: pkg.id, price: supportPrice };
+        }
+      }
+    }
+
+    // Build comparison pairs (only for same pricing type)
+    const comparisonPairs: Array<{ idA: string; idB: string; diff: number }> = [];
+
+    for (let i = 0; i < packageData.length; i++) {
+      for (let j = i + 1; j < packageData.length; j++) {
+        const pkgA = packageData[i];
+        const pkgB = packageData[j];
+
+        // Compare one-time prices
+        if (pkgA.one_time_price !== null && pkgB.one_time_price !== null) {
+          comparisonPairs.push({
+            idA: pkgA.id,
+            idB: pkgB.id,
+            diff: pkgA.one_time_price - pkgB.one_time_price
+          });
+        }
+      }
+    }
+
+    return {
+      packages: packageData,
+      cheapest_one_time: cheapestOneTime,
+      cheapest_monthly_support: cheapestMonthlySupport,
+      comparison_pairs: comparisonPairs
+    };
+  }
+
+  /**
    * Execute a tool by name
    */
   executeTool(toolName: string, args: any): any {
@@ -311,6 +429,11 @@ export class AssistantToolsService {
         case 'get_company_info':
           result = this.get_company_info();
           console.log('[Tools] get_company_info result:', result.legal_entity, result.jurisdiction);
+          break;
+
+        case 'compare_packages':
+          result = this.compare_packages(args.packages || []);
+          console.log('[Tools] compare_packages result:', result.packages.length, 'packages compared');
           break;
 
         default:

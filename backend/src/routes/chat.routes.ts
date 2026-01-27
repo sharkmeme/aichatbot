@@ -36,6 +36,62 @@ function isCompanyInfoQuestion(text: string): boolean {
 }
 
 /**
+ * Get comparison context from recent bot messages
+ * Returns array of package IDs that were recently discussed
+ */
+function getComparisonContext(recentMessages: Message[]): { last_packages: string[]; last_division?: string } {
+  const packages = new Set<string>();
+  let lastDivision: string | undefined;
+
+  // Look through recent bot messages for comparison metadata
+  for (let i = recentMessages.length - 1; i >= 0; i--) {
+    const msg = recentMessages[i];
+    if (msg.sender === 'bot' && msg.metadata) {
+      const metadata = typeof msg.metadata === 'string' ? JSON.parse(msg.metadata) : msg.metadata;
+
+      if (metadata.comparison?.last_packages) {
+        for (const pkg of metadata.comparison.last_packages) {
+          packages.add(pkg);
+        }
+      }
+
+      if (metadata.comparison?.last_division && !lastDivision) {
+        lastDivision = metadata.comparison.last_division;
+      }
+
+      // Limit to last 5 messages
+      if (packages.size >= 5) break;
+    }
+  }
+
+  return {
+    last_packages: Array.from(packages).slice(0, 5),
+    last_division: lastDivision
+  };
+}
+
+/**
+ * Update comparison context with new packages
+ * Appends new packages, deduplicates, keeps max 5
+ */
+function updateComparisonContext(
+  existingContext: { last_packages: string[]; last_division?: string } | undefined,
+  newPackages: string[],
+  division?: string
+): { last_packages: string[]; last_division?: string } {
+  const packages = new Set<string>(existingContext?.last_packages || []);
+
+  for (const pkg of newPackages) {
+    packages.add(pkg);
+  }
+
+  return {
+    last_packages: Array.from(packages).slice(-5), // Keep last 5
+    last_division: division || existingContext?.last_division
+  };
+}
+
+/**
  * Get metadata from the most recent bot message
  * Used to check current state without scanning history
  */
@@ -864,6 +920,9 @@ router.post(
             }]
           : recentMessages;
 
+        // Get comparison context for comparison questions
+        const comparisonContext = getComparisonContext(recentMessages);
+
         const llmResponse = await openaiService.generateChatCompletionWithTools(
           messagesWithContext,
           sanitizedMessage,
@@ -873,7 +932,8 @@ router.post(
             pendingLeadField,
             pendingQuestion,
             lastIntent: lastIntent || undefined,
-            requestedPackages: requestedPackages || undefined
+            requestedPackages: requestedPackages || undefined,
+            comparisonContext: comparisonContext.last_packages.length > 0 ? comparisonContext : undefined
           }
         );
 
@@ -908,6 +968,16 @@ router.post(
           if (llmResponse.stateUpdate.intent) {
             metadata.intent = llmResponse.stateUpdate.intent;
           }
+        }
+
+        // COMPARISON TRACKING: Update comparison context with packages called
+        if (llmResponse.toolContext?.called_packages && llmResponse.toolContext.called_packages.length > 0) {
+          const existingComparison = getComparisonContext(recentMessages);
+          const newPackageIds = llmResponse.toolContext.called_packages.map((p: any) => `${p.division}/${p.package}`);
+          const division = llmResponse.toolContext.called_packages[0]?.division;
+
+          metadata.comparison = updateComparisonContext(existingComparison, newPackageIds, division);
+          console.log('[Comparison] 📊 Updated comparison context:', JSON.stringify(metadata.comparison));
         }
 
         // Price hallucination guard using tool context

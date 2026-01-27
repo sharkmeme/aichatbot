@@ -126,6 +126,26 @@ export class OpenAIService {
       {
         type: 'function' as const,
         function: {
+          name: 'compare_packages',
+          description: 'Compare multiple packages with structured pricing data. MUST use this for comparison questions like "which is cheaper", "what\'s the difference", "compare X and Y". Takes package IDs from comparison context (available in state). Returns structured data: one_time_price, monthly_price, optional_support_monthly for each package, plus cheapest_one_time and comparison_pairs. If fewer than 2 packages available in context, ask clarifying question.',
+          parameters: {
+            type: 'object',
+            properties: {
+              packages: {
+                type: 'array',
+                description: 'Array of package IDs to compare (format: "division/package", e.g., ["code/lead-intake-crm", "code/ai-outreach"])',
+                items: {
+                  type: 'string'
+                }
+              }
+            },
+            required: ['packages']
+          }
+        }
+      },
+      {
+        type: 'function' as const,
+        function: {
           name: 'set_state',
           description: 'Set conversation state (intent, topic, pending question). Use this INSTEAD of writing STATE_JSON in your text response. This keeps state updates clean and separate from user-facing messages.',
           parameters: {
@@ -184,6 +204,7 @@ export class OpenAIService {
       pendingQuestion?: any | null;
       lastIntent?: string | null;
       requestedPackages?: string[] | null;
+      comparisonContext?: { last_packages: string[]; last_division?: string } | null;
     }
   ): Promise<{
     reply: string;
@@ -192,6 +213,7 @@ export class OpenAIService {
     toolContext?: {
       allowed_prices: number[];
       listed_division_packages?: { division: string; packages: string[] } | null;
+      called_packages?: Array<{ division: string; package: string }>;
     };
   }> {
     try {
@@ -206,12 +228,20 @@ CRITICAL RULES FOR TOOL USAGE:
 3. When discussing pricing, ALWAYS call get_package or list_division_packages first
 4. If user asks to "buy" or "get this", confirm what package they mean (use search_packages if unclear), then tell them we'll collect their information
 5. For ANY question about company legal status, registration, location, country, EU, Romania, where we are based, official company, or legal entity: MUST call get_company_info tool FIRST (NOT search_kb). This tool provides deterministic company facts and ensures consistent answers.
+6. For COMPARISON questions ("which is cheaper", "what's the difference", "compare"): MUST call compare_packages using the packages from COMPARISON_CONTEXT. If fewer than 2 packages available, ask: "Which two packages would you like to compare?"
 
 COMPANY/LEGAL/LOCATION QUESTIONS (HIGHEST PRIORITY):
 - ALWAYS use get_company_info for these questions: legal company, registered, based, location, country, EU, Romania, official, legal entity, jurisdiction, where are you
 - NEVER say "I don't have those details" for company info - get_company_info has all the facts
 - Answer using the structured data from get_company_info
 - search_kb is optional/secondary for company questions
+
+COMPARISON QUESTIONS (HIGH PRIORITY):
+- ALWAYS use compare_packages for: "which is cheaper", "what's the difference", "compare", "which one", "what's better"
+- Use packages from COMPARISON_CONTEXT (provided in state)
+- NEVER mention package names not in compare_packages output
+- If compare_packages returns data, answer ONLY using that data
+- If fewer than 2 packages in context, ask user to clarify which packages to compare
 
 FORMATTING RULES:
 - Use the exact price format from tool outputs (includes "one-time" or "/month")
@@ -248,6 +278,11 @@ Example STATE_JSON:
         }
         if (state.lastIntent) {
           stateContext += `Last intent: ${state.lastIntent}\n`;
+        }
+        if (state.comparisonContext && state.comparisonContext.last_packages.length > 0) {
+          stateContext += `\nCOMPARISON_CONTEXT:\n`;
+          stateContext += `Recently discussed packages: ${state.comparisonContext.last_packages.join(', ')}\n`;
+          stateContext += `Use these package IDs for compare_packages tool when user asks comparison questions.\n`;
         }
 
         chatMessages.push({ role: 'system', content: stateContext });
@@ -288,6 +323,7 @@ Example STATE_JSON:
       const MAX_ROUNDS = 3;
       const allAllowedPrices: number[] = [];
       let listedDivisionPackages: { division: string; packages: string[] } | null = null;
+      const calledPackages: Array<{ division: string; package: string }> = []; // Track get_package calls for comparison
       let capturedState: any = undefined; // Capture state from set_state tool
 
       while (roundCount < MAX_ROUNDS) {
@@ -331,12 +367,28 @@ Example STATE_JSON:
               // Execute regular tools via toolsService
               toolResult = this.toolsService.executeTool(toolName, toolArgs);
 
+              // Track when get_package is called - for comparison context
+              if (toolName === 'get_package' && toolArgs.division && toolArgs.package) {
+                calledPackages.push({
+                  division: toolArgs.division,
+                  package: toolArgs.package
+                });
+                console.log('[LLM] 📦 Tracked package call:', toolArgs.division, '/', toolArgs.package);
+              }
+
               // Track when list_division_packages is called - indicates multiple packages listed
               if (toolName === 'list_division_packages' && toolArgs.division && toolResult?.packages) {
                 listedDivisionPackages = {
                   division: toolArgs.division,
                   packages: toolResult.packages.map((p: any) => p.id)
                 };
+                // Also add to called packages for comparison
+                for (const pkg of toolResult.packages) {
+                  calledPackages.push({
+                    division: toolArgs.division,
+                    package: pkg.id
+                  });
+                }
                 console.log('[LLM] 📋 Tracked division package listing:', listedDivisionPackages);
               }
 
@@ -377,7 +429,8 @@ Example STATE_JSON:
           stateUpdate: finalStateUpdate,
           toolContext: {
             allowed_prices: allAllowedPrices,
-            listed_division_packages: listedDivisionPackages
+            listed_division_packages: listedDivisionPackages,
+            called_packages: calledPackages
           }
         };
       }
@@ -397,7 +450,8 @@ Example STATE_JSON:
         stateUpdate: finalStateUpdate,
         toolContext: {
           allowed_prices: allAllowedPrices,
-          listed_division_packages: listedDivisionPackages
+          listed_division_packages: listedDivisionPackages,
+          called_packages: calledPackages
         }
       };
 
