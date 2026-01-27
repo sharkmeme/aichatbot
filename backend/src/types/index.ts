@@ -31,6 +31,15 @@ export interface Conversation {
   created_at: Date;
   updated_at: Date;
   lead_id?: string;
+  state?: ConversationState;
+}
+
+export interface ConversationState {
+  stage: 'info' | 'collect_name' | 'collect_email' | 'choose_contact';
+  topic?: {
+    division?: string;
+    package?: string;
+  } | null;
 }
 
 export interface ChatRequest {

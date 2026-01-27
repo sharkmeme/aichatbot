@@ -147,44 +147,31 @@ export class OpenAIService {
         type: 'function' as const,
         function: {
           name: 'set_state',
-          description: 'Set conversation state (intent, topic, pending question). Use this INSTEAD of writing STATE_JSON in your text response. This keeps state updates clean and separate from user-facing messages.',
+          description: 'Set conversation state for stage management. Use this to move between conversation stages (info → collect_name → collect_email → choose_contact). Call this when you want to start lead collection or change stages. Server persists the state.',
           parameters: {
             type: 'object',
             properties: {
-              intent: {
+              stage: {
                 type: 'string',
-                description: 'Current conversation intent (pricing, inclusions, buy, general_question, etc.)'
+                enum: ['info', 'collect_name', 'collect_email', 'choose_contact'],
+                description: 'Conversation stage: info (answering questions), collect_name (asking for name), collect_email (asking for email), choose_contact (showing contact options)'
               },
               topic: {
                 type: 'object',
-                description: 'Current conversation topic',
+                description: 'Current conversation topic (division/package user is interested in)',
                 properties: {
                   division: {
                     type: 'string',
-                    description: 'Division ID if known'
+                    description: 'Division ID (vip, code, software, studios)'
                   },
                   package: {
                     type: 'string',
                     description: 'Package ID if known'
                   }
                 }
-              },
-              pending_question: {
-                type: 'object',
-                description: 'Pending question awaiting user response',
-                properties: {
-                  topic: {
-                    type: 'object',
-                    description: 'Topic for the pending question'
-                  },
-                  question_type: {
-                    type: 'string',
-                    description: 'Type of question (pricing_or_inclusions, etc.)'
-                  }
-                }
               }
             },
-            required: []
+            required: ['stage']
           }
         }
       }
@@ -247,18 +234,15 @@ FORMATTING RULES:
 - Use the exact price format from tool outputs (includes "one-time" or "/month")
 - When showing contact options, use the exact button tokens from get_contact_buttons()
 - Never claim "I will contact you on Telegram/WhatsApp" - only say "Tap the X button below"
+- DO NOT print LEAD_JSON or STATE_JSON in your responses
+- Use set_state tool for all state management
 
-OUTPUT FORMAT:
-End your response with:
-LEAD_JSON: {JSON object with any lead fields you extracted}
-STATE_JSON: {JSON object with topic, pending_question if any, intent}
-
-Example STATE_JSON:
-{
-  "topic": {"division": "code", "package": "lead-intake-crm"},
-  "pending_question": null,
-  "intent": "pricing"
-}`;
+CONVERSATION FLOW:
+- Use set_state tool to manage conversation stages (info → collect_name → collect_email → choose_contact)
+- When user shows purchase intent, call set_state({stage: "collect_name", topic: {...}})
+- After getting name, call set_state({stage: "collect_email"})
+- After getting email, call set_state({stage: "choose_contact"}) and show contact buttons
+- Server handles validation and persistence`;
 
       const chatMessages: OpenAIChatMessage[] = [
         { role: 'system', content: systemPrompt }
@@ -539,52 +523,21 @@ Example STATE_JSON:
   }
 
   /**
-   * Parse response with both LEAD_JSON and STATE_JSON
+   * Parse response - simplified version without JSON extraction
+   * LEAD_JSON and STATE_JSON are removed - use set_state tool instead
    */
   private parseResponseWithState(content: string): {
     reply: string;
     lead: Lead | null;
     stateUpdate?: any;
   } {
-    let reply = content;
-    let lead: Lead | null = null;
-    let stateUpdate: any = undefined;
-
-    // Extract LEAD_JSON using robust extraction
-    const leadExtraction = this.extractJsonObject(content, 'LEAD_JSON:');
-    if (leadExtraction) {
-      try {
-        lead = JSON.parse(leadExtraction.jsonStr);
-        console.log('[LLM] Parsed LEAD_JSON with', Object.keys(lead || {}).filter(k => (lead as any)[k]).length, 'fields');
-      } catch (error) {
-        console.error('[LLM] Failed to parse LEAD_JSON:', error);
-        console.error('[LLM] Invalid JSON was:', leadExtraction.jsonStr.substring(0, 100));
-        lead = null; // Set to null on parse failure
-      }
-      // ALWAYS remove the entire block from reply, even on parse failure
-      reply = (content.substring(0, leadExtraction.startIndex) + content.substring(leadExtraction.endIndex)).trim();
-      content = reply; // Update content for next extraction
-    }
-
-    // Extract STATE_JSON using robust extraction
-    const stateExtraction = this.extractJsonObject(content, 'STATE_JSON:');
-    if (stateExtraction) {
-      try {
-        stateUpdate = JSON.parse(stateExtraction.jsonStr);
-        console.log('[LLM] Parsed STATE_JSON:', JSON.stringify(stateUpdate));
-      } catch (error) {
-        console.error('[LLM] Failed to parse STATE_JSON:', error);
-        console.error('[LLM] Invalid JSON was:', stateExtraction.jsonStr.substring(0, 100));
-        stateUpdate = undefined; // Set to undefined on parse failure
-      }
-      // ALWAYS remove the entire block from reply, even on parse failure
-      reply = (reply.substring(0, stateExtraction.startIndex) + reply.substring(stateExtraction.endIndex)).trim();
-    }
-
-    // Final cleanup - remove any trailing commas or JSON fragments
-    reply = reply.replace(/[,\s]+$/, '').trim();
-
-    return { reply, lead, stateUpdate };
+    // Just return the content as-is, no JSON parsing needed
+    // LLM uses set_state tool for state management, not text-based JSON
+    return {
+      reply: content.trim(),
+      lead: null,
+      stateUpdate: undefined
+    };
   }
 
   /**
