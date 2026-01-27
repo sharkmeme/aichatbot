@@ -5,6 +5,7 @@ import { DatabaseService } from '../services/database.service';
 import { OpenAIService } from '../services/openai.service';
 import { IntentService, ConversationTopic, PendingDisambiguation, PendingLeadField, Intent } from '../services/intent.service';
 import { PricingResponderService } from '../services/pricing-responder.service';
+import { AssistantToolsService } from '../services/assistant-tools.service';
 import { ChatRequest, ChatResponse, Lead, Message } from '../types';
 import { getAllValidPrices, PRICING_DATA } from '../data/pricing';
 import {
@@ -23,6 +24,16 @@ const dbService = new DatabaseService();
 const openaiService = new OpenAIService();
 const intentService = new IntentService();
 const pricingResponder = new PricingResponderService();
+const toolsService = new AssistantToolsService();
+
+/**
+ * Detect if message is asking about company legal status, location, or registration
+ */
+function isCompanyInfoQuestion(text: string): boolean {
+  const normalized = text.toLowerCase().trim();
+  const companyPatterns = /\b(legal|registered|official|company|location|based|where are you|country|romania|eu|jurisdiction|entity|srl)\b/i;
+  return companyPatterns.test(normalized);
+}
 
 /**
  * Get metadata from the most recent bot message
@@ -492,6 +503,15 @@ router.post(
         pendingLeadField = null;
       }
 
+      // SERVER-SIDE COMPANY INFO FALLBACK
+      // Inject company facts as context if message asks about legal/location
+      let companyInfoContext: string | null = null;
+      if (isCompanyInfoQuestion(sanitizedMessage)) {
+        const companyInfo = toolsService.executeTool('get_company_info', {});
+        companyInfoContext = `COMPANY FACTS (use this to answer): ${JSON.stringify(companyInfo)}`;
+        console.log('[CompanyInfo] 🏢 Detected company/legal/location question - injecting context:', companyInfoContext);
+      }
+
       let reply: string = "I'm having trouble processing that. Could you rephrase your question?";
       let lead: Lead | null = null;
       let metadata: any = {}; // Track metadata
@@ -833,8 +853,19 @@ router.post(
         // Use LLM with tools for natural conversation
         console.log('[Chat] → Using LLM with tool calling for response generation');
 
+        // Inject company info context if detected
+        const messagesWithContext = companyInfoContext
+          ? [...recentMessages, {
+              id: `system-${Date.now()}`,
+              conversation_id: conversation.id,
+              sender: 'system' as const,
+              content: companyInfoContext,
+              created_at: new Date()
+            }]
+          : recentMessages;
+
         const llmResponse = await openaiService.generateChatCompletionWithTools(
-          recentMessages,
+          messagesWithContext,
           sanitizedMessage,
           existingLead,
           {

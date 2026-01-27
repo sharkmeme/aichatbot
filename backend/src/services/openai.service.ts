@@ -114,6 +114,18 @@ export class OpenAIService {
       {
         type: 'function' as const,
         function: {
+          name: 'get_company_info',
+          description: 'Get deterministic company information (legal entity, jurisdiction, location, operating mode, regions served). MUST use this for ANY question about: company legal status, registration, location, country, EU, Romania, where we are based, official company, legal entity. NEVER use search_kb for company/legal/location questions - ALWAYS use this tool instead.',
+          parameters: {
+            type: 'object',
+            properties: {},
+            required: []
+          }
+        }
+      },
+      {
+        type: 'function' as const,
+        function: {
           name: 'set_state',
           description: 'Set conversation state (intent, topic, pending question). Use this INSTEAD of writing STATE_JSON in your text response. This keeps state updates clean and separate from user-facing messages.',
           parameters: {
@@ -193,6 +205,13 @@ CRITICAL RULES FOR TOOL USAGE:
 2. NEVER invent prices or features - ONLY use data from tool outputs
 3. When discussing pricing, ALWAYS call get_package or list_division_packages first
 4. If user asks to "buy" or "get this", confirm what package they mean (use search_packages if unclear), then tell them we'll collect their information
+5. For ANY question about company legal status, registration, location, country, EU, Romania, where we are based, official company, or legal entity: MUST call get_company_info tool FIRST (NOT search_kb). This tool provides deterministic company facts and ensures consistent answers.
+
+COMPANY/LEGAL/LOCATION QUESTIONS (HIGHEST PRIORITY):
+- ALWAYS use get_company_info for these questions: legal company, registered, based, location, country, EU, Romania, official, legal entity, jurisdiction, where are you
+- NEVER say "I don't have those details" for company info - get_company_info has all the facts
+- Answer using the structured data from get_company_info
+- search_kb is optional/secondary for company questions
 
 FORMATTING RULES:
 - Use the exact price format from tool outputs (includes "one-time" or "/month")
@@ -253,7 +272,7 @@ Example STATE_JSON:
       // Add conversation history
       for (const msg of messages.slice(-10)) {  // Last 10 messages for context
         chatMessages.push({
-          role: msg.sender === 'user' ? 'user' : 'assistant',
+          role: msg.sender === 'user' ? 'user' : msg.sender === 'system' ? 'system' : 'assistant',
           content: msg.content
         });
       }

@@ -19,7 +19,7 @@ export interface Lead {
 export interface Message {
   id: string;
   conversation_id: string;
-  sender: 'user' | 'bot';
+  sender: 'user' | 'bot' | 'system';
   content: string;
   created_at: Date;
   metadata?: any;

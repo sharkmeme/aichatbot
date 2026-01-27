@@ -1,6 +1,7 @@
 import { PRICING_DATA, formatPrice } from '../data/pricing';
 import { KnowledgeService } from './knowledge.service';
 import { fuzzyMatch, similarityScore } from '../utils/fuzzy';
+import { config } from '../config';
 
 /**
  * Tool outputs for LLM assistant
@@ -60,6 +61,14 @@ interface ContactButtons {
     contact_form: string;
     call_us: string;
   };
+}
+
+interface CompanyInfo {
+  legal_entity: string;
+  jurisdiction: string;
+  operating_mode: string;
+  serving_regions: string[];
+  website: string;
 }
 
 /**
@@ -243,6 +252,20 @@ export class AssistantToolsService {
   }
 
   /**
+   * Get deterministic company information
+   * Use this for legal, location, and company structure questions
+   */
+  get_company_info(): CompanyInfo {
+    return {
+      legal_entity: 'SRL under Romanian law',
+      jurisdiction: 'Romania (EU)',
+      operating_mode: 'Remote',
+      serving_regions: ['EU', 'US', 'Asia'],
+      website: config.contactWebsite
+    };
+  }
+
+  /**
    * Execute a tool by name
    */
   executeTool(toolName: string, args: any): any {
@@ -283,6 +306,11 @@ export class AssistantToolsService {
         case 'get_contact_buttons':
           result = this.get_contact_buttons();
           console.log('[Tools] get_contact_buttons result: 5 buttons');
+          break;
+
+        case 'get_company_info':
+          result = this.get_company_info();
+          console.log('[Tools] get_company_info result:', result.legal_entity, result.jurisdiction);
           break;
 
         default:
