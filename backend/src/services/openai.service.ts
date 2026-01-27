@@ -192,7 +192,9 @@ export class OpenAIService {
       lastIntent?: string | null;
       requestedPackages?: string[] | null;
       comparisonContext?: { last_packages: string[]; last_division?: string } | null;
-    }
+    },
+    preExecutedTools?: Array<{ name: string; args: any; result: any }>,
+    allowedTools?: string[]
   ): Promise<{
     reply: string;
     lead: Lead | null;
@@ -302,6 +304,43 @@ CONVERSATION FLOW:
         content: userMessage
       });
 
+      // Inject pre-executed tool results (if any)
+      if (preExecutedTools && preExecutedTools.length > 0) {
+        console.log(`[LLM] Injecting ${preExecutedTools.length} pre-executed tool result(s)`);
+        // Add a fake assistant message saying it called tools
+        chatMessages.push({
+          role: 'assistant',
+          content: null,
+          tool_calls: preExecutedTools.map((tool, idx) => ({
+            id: `pre_${idx}`,
+            type: 'function' as const,
+            function: {
+              name: tool.name,
+              arguments: JSON.stringify(tool.args)
+            }
+          }))
+        } as any);
+
+        // Add tool results
+        for (let i = 0; i < preExecutedTools.length; i++) {
+          const tool = preExecutedTools[i];
+          chatMessages.push({
+            role: 'tool',
+            tool_call_id: `pre_${i}`,
+            content: JSON.stringify(tool.result)
+          } as any);
+        }
+      }
+
+      // Filter tool definitions if allowedTools is specified
+      const toolDefinitions = allowedTools
+        ? this.getToolDefinitions().filter(t => allowedTools.includes(t.function.name))
+        : this.getToolDefinitions();
+
+      if (allowedTools) {
+        console.log(`[LLM] Restricting tools to: ${allowedTools.join(', ')}`);
+      }
+
       // Tool call loop (max 3 rounds)
       let roundCount = 0;
       const MAX_ROUNDS = 3;
@@ -310,6 +349,35 @@ CONVERSATION FLOW:
       const calledPackages: Array<{ division: string; package: string }> = []; // Track get_package calls for comparison
       let capturedState: any = undefined; // Capture state from set_state tool
 
+      // Collect allowed prices from pre-executed tools
+      if (preExecutedTools) {
+        for (const tool of preExecutedTools) {
+          if (tool.result && tool.result.allowed_prices) {
+            allAllowedPrices.push(...tool.result.allowed_prices);
+          }
+          // Track get_package calls from pre-execution
+          if (tool.name === 'get_package' && tool.args.division && tool.args.package) {
+            calledPackages.push({
+              division: tool.args.division,
+              package: tool.args.package
+            });
+          }
+          // Track list_division_packages from pre-execution
+          if (tool.name === 'list_division_packages' && tool.args.division && tool.result?.packages) {
+            listedDivisionPackages = {
+              division: tool.args.division,
+              packages: tool.result.packages.map((p: any) => p.id)
+            };
+            for (const pkg of tool.result.packages) {
+              calledPackages.push({
+                division: tool.args.division,
+                package: pkg.id
+              });
+            }
+          }
+        }
+      }
+
       while (roundCount < MAX_ROUNDS) {
         roundCount++;
         console.log(`[LLM] Tool call round ${roundCount}/${MAX_ROUNDS}`);
@@ -317,7 +385,7 @@ CONVERSATION FLOW:
         const completion = await this.client.chat.completions.create({
           model: 'gpt-4o-mini',
           messages: chatMessages,
-          tools: this.getToolDefinitions(),
+          tools: toolDefinitions,
           tool_choice: roundCount === 1 ? 'auto' : 'auto',  // Let model decide
           temperature: 0.7,
           max_tokens: 800

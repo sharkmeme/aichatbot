@@ -3,12 +3,14 @@ import { validateChatRequest, sanitizeInput } from '../middleware/validation';
 import { sessionRateLimiter } from '../middleware/rateLimiter';
 import { DatabaseService } from '../services/database.service';
 import { OpenAIService } from '../services/openai.service';
+import { AssistantToolsService } from '../services/assistant-tools.service';
 import { ChatRequest, ChatResponse, Lead, Message, ConversationState } from '../types';
 import { getAllValidPrices } from '../data/pricing';
 
 const router = Router();
 const dbService = new DatabaseService();
 const openaiService = new OpenAIService();
+const toolsService = new AssistantToolsService();
 
 /**
  * Get current conversation state from last bot message
@@ -125,6 +127,82 @@ function detectStageFromReply(reply: string, currentState: ConversationState): C
 
   // No stage change detected, return current state
   return currentState;
+}
+
+/**
+ * Tool pre-router: Detect keywords and force correct tool calls for obvious queries
+ * Returns { forced: boolean, tools: Array<{name, args}>, allowedTools: string[] | null }
+ */
+function preRouteTools(message: string): {
+  forced: boolean;
+  tools: Array<{ name: string; args: any }>;
+  allowedTools: string[] | null;
+} {
+  const normalized = message.toLowerCase().trim();
+  const hasPricingKeywords = /\b(price|pricing|cost|how much|費用)\b/i.test(normalized);
+
+  console.log('[Pre-Router] Analyzing message for deterministic routing...');
+
+  // a) Ticket/Helpdesk/Support Ticket → search_packages("ticket") + get_package
+  if (/\b(ticket|tickets|helpdesk|help.?desk|support.?ticket)\b/i.test(normalized) && hasPricingKeywords) {
+    console.log('[Pre-Router] ✅ TICKET pricing detected → forcing search_packages("ticket") + get_package');
+    return {
+      forced: true,
+      tools: [
+        { name: 'search_packages', args: { query: 'ticket' } }
+      ],
+      allowedTools: ['search_packages', 'get_package', 'search_kb', 'get_contact_buttons', 'get_company_info', 'set_state']
+    };
+  }
+
+  // b) CRM/Leads/Lead Intake → search_packages("crm") + get_package
+  if (/\b(crm|lead.?intake|lead.?capture|lead.?crm|lead.?management|leads)\b/i.test(normalized) && hasPricingKeywords) {
+    console.log('[Pre-Router] ✅ CRM pricing detected → forcing search_packages("crm") + get_package');
+    return {
+      forced: true,
+      tools: [
+        { name: 'search_packages', args: { query: 'crm' } }
+      ],
+      allowedTools: ['search_packages', 'get_package', 'search_kb', 'get_contact_buttons', 'get_company_info', 'set_state']
+    };
+  }
+
+  // c) Outreach → search_packages("outreach") + get_package
+  if (/\b(outreach|follow.?up|followup)\b/i.test(normalized) && hasPricingKeywords) {
+    console.log('[Pre-Router] ✅ OUTREACH pricing detected → forcing search_packages("outreach") + get_package');
+    return {
+      forced: true,
+      tools: [
+        { name: 'search_packages', args: { query: 'outreach' } }
+      ],
+      allowedTools: ['search_packages', 'get_package', 'search_kb', 'get_contact_buttons', 'get_company_info', 'set_state']
+    };
+  }
+
+  // d) VIP/Studios/Software/Code + pricing → list_division_packages
+  const divisions = [
+    { pattern: /\bvip\b/i, id: 'vip' },
+    { pattern: /\bstudios\b/i, id: 'studios' },
+    { pattern: /\b(software|honey.?software)\b/i, id: 'software' },
+    { pattern: /\b(code|bunny.?code)\b/i, id: 'code' }
+  ];
+
+  for (const { pattern, id } of divisions) {
+    if (pattern.test(normalized) && hasPricingKeywords) {
+      console.log(`[Pre-Router] ✅ ${id.toUpperCase()} division pricing detected → forcing list_division_packages`);
+      return {
+        forced: true,
+        tools: [
+          { name: 'list_division_packages', args: { division: id } }
+        ],
+        allowedTools: ['list_division_packages', 'get_package', 'search_kb', 'get_contact_buttons', 'get_company_info', 'set_state']
+      };
+    }
+  }
+
+  // No pre-routing needed
+  console.log('[Pre-Router] No deterministic routing needed, using LLM planner');
+  return { forced: false, tools: [], allowedTools: null };
 }
 
 /**
@@ -251,6 +329,37 @@ router.post(
 
         console.log('[Chat] → Using LLM with tools');
 
+        // PRE-ROUTER: Detect if we should force specific tools for obvious queries
+        const preRoute = preRouteTools(sanitizedMessage);
+        let preExecutedTools: Array<{ name: string; args: any; result: any }> = [];
+
+        // Execute pre-routed tools if any
+        if (preRoute.forced && preRoute.tools.length > 0) {
+          console.log(`[Pre-Router] Executing ${preRoute.tools.length} forced tool(s)`);
+          for (const tool of preRoute.tools) {
+            const result = toolsService.executeTool(tool.name, tool.args);
+            preExecutedTools.push({ name: tool.name, args: tool.args, result });
+
+            // If search_packages returned candidates, auto-call get_package for top candidate
+            if (tool.name === 'search_packages' && result?.candidates?.length > 0) {
+              const topCandidate = result.candidates[0];
+              if (topCandidate.package) {
+                console.log(`[Pre-Router] Auto-calling get_package for top candidate: ${topCandidate.division}/${topCandidate.package}`);
+                const pkgResult = toolsService.executeTool('get_package', {
+                  division: topCandidate.division,
+                  package: topCandidate.package
+                });
+                preExecutedTools.push({
+                  name: 'get_package',
+                  args: { division: topCandidate.division, package: topCandidate.package },
+                  result: pkgResult
+                });
+              }
+            }
+          }
+          console.log(`[Pre-Router] Pre-executed ${preExecutedTools.length} tool(s), restricting LLM to: ${preRoute.allowedTools?.join(', ')}`);
+        }
+
         const llmResponse = await openaiService.generateChatCompletionWithTools(
           recentMessages,
           sanitizedMessage,
@@ -262,7 +371,9 @@ router.post(
             lastIntent: null,
             requestedPackages: null,
             comparisonContext: null
-          }
+          },
+          preExecutedTools,
+          preRoute.allowedTools || undefined
         );
 
         reply = llmResponse.reply;
