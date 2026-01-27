@@ -34,13 +34,33 @@ function getLastBotMetadata(recentMessages: Message[]): any | null {
 /**
  * Check if there's a pending lead field we're waiting for
  * ONLY reads from the most recent bot message (not last N)
+ * Guards: if existingLead already has the field, return null
  */
-function getPendingLeadField(recentMessages: Message[]): PendingLeadField | null {
+function getPendingLeadField(recentMessages: Message[], existingLead?: Lead | null): PendingLeadField | null {
   const metadata = getLastBotMetadata(recentMessages);
   if (metadata && metadata.pendingLeadField) {
-    console.log('[LeadFlow] 🔄 PENDING LEAD FIELD FOUND:', metadata.pendingLeadField);
-    return metadata.pendingLeadField as PendingLeadField;
+    const pending = metadata.pendingLeadField as PendingLeadField;
+
+    // Guard: if existingLead already contains that field, return null
+    if (existingLead) {
+      if (pending === 'name' && existingLead.name) {
+        console.log('[LeadFlow] ⚠️  Pending "name" but existingLead.name already set - clearing pending');
+        return null;
+      }
+      if (pending === 'email' && existingLead.email) {
+        console.log('[LeadFlow] ⚠️  Pending "email" but existingLead.email already set - clearing pending');
+        return null;
+      }
+      if (pending === 'contact_choice' && existingLead.preferred_contact_channel) {
+        console.log('[LeadFlow] ⚠️  Pending "contact_choice" but existingLead.preferred_contact_channel already set - clearing pending');
+        return null;
+      }
+    }
+
+    console.log('[LeadFlow] ✅ PENDING LEAD FIELD ACTIVE:', pending);
+    return pending;
   }
+  console.log('[LeadFlow] No pending lead field');
   return null;
 }
 
@@ -438,7 +458,7 @@ router.post(
       console.log('[Chat] Recent messages count:', recentMessages.length);
 
       // Check for pending lead field (HIGHEST PRIORITY)
-      const pendingLeadField = getPendingLeadField(recentMessages);
+      const pendingLeadField = getPendingLeadField(recentMessages, existingLead);
 
       // Check for pending disambiguation state
       const pendingDisambiguation = getPendingDisambiguation(recentMessages);
@@ -858,32 +878,13 @@ router.post(
           metadata.pendingLeadField = 'contact_choice';
           metadata.ctaShown = true;
           metadata.ctaShownAt = new Date().toISOString();
-          console.log('[Chat] LLM showed contact buttons - marked CTA shown');
+          console.log('[CTA] Contact buttons shown - pendingLeadField set to contact_choice');
         }
 
-        // If user is qualified and asked a question during contact choice
-        // Only re-show CTA if user explicitly expresses proceed intent (buy/start/meeting/etc)
-        const isAcknowledgement = /^(ok|okay|thanks|thank you|got it|sounds good|perfect|great|cool)$/i.test(sanitizedMessage.trim());
-        const userExpressesProceed = detectProceedIntent(sanitizedMessage);
-
-        if (pendingLeadField === 'contact_choice' &&
-            !reply.includes('{{BTN_') &&
-            !isAcknowledgement &&
-            existingLead && existingLead.name && existingLead.email) {
-
-          // Only re-append CTA if user explicitly expresses proceed intent
-          if (userExpressesProceed) {
-            console.log('[Chat] ℹ️  User expressed proceed intent - re-appending contact buttons');
-            reply += '\n\nHow would you like to move forward?\n\n{{BTN_MEETING}}\n{{BTN_WHATSAPP}}\n{{BTN_TELEGRAM}}\n{{BTN_CONTACT_FORM}}\n{{BTN_CALL_US}}';
-            metadata.pendingLeadField = 'contact_choice';
-            metadata.ctaShown = true;
-            metadata.ctaShownAt = new Date().toISOString();
-          } else {
-            // User asked unrelated question - answer without CTA, clear pending
-            console.log('[Chat] User asked question during contact_choice - answering normally, clearing pending state');
-            // Don't set pendingLeadField, clearing it
-          }
-        }
+        // Never automatically re-append CTA buttons after answering questions
+        // Buttons only appear when:
+        // (a) User just provided email (handled in email flow above)
+        // (b) User explicitly asks "how to proceed" (LLM will handle via prompt)
 
         // Enhance lead with server-side topic tracking
         // Only mark as interested if intent is pricing/inclusions/buy
@@ -905,17 +906,31 @@ router.post(
 
       // Validate LEAD_JSON fields to prevent hallucination
       if (lead) {
-        // Reject budget_range unless user message contains budget signals
-        if (lead.budget_range && !hasBudgetSignals(sanitizedMessage)) {
-          console.log('[Validation] ⚠️  Rejecting hallucinated budget_range:', lead.budget_range, '- no budget signals in user message');
+        // Reject budget_range unless pendingLeadField === 'budget' OR user message contains explicit budget
+        if (lead.budget_range && pendingLeadField !== 'budget' && !hasBudgetSignals(sanitizedMessage)) {
+          console.log('[Validation] ⚠️  Rejecting hallucinated budget_range:', lead.budget_range, '- no budget signals in message');
           lead.budget_range = undefined;
         }
 
-        // Reject preferred_contact_channel unless user explicitly mentioned a channel
-        // Exception: Allow if pendingLeadField was 'contact_choice' (user was prompted to choose)
-        if (lead.preferred_contact_channel && !hasContactChannelMention(sanitizedMessage) && pendingLeadField !== 'contact_choice') {
-          console.log('[Validation] ⚠️  Rejecting hallucinated preferred_contact_channel:', lead.preferred_contact_channel, '- no channel mention in user message');
-          lead.preferred_contact_channel = undefined;
+        // Normalize and validate preferred_contact_channel
+        if (lead.preferred_contact_channel) {
+          const normalized = lead.preferred_contact_channel.toLowerCase().trim();
+          const validChannels = ['telegram', 'whatsapp', 'meeting', 'contact_form', 'call'];
+
+          if (!validChannels.includes(normalized)) {
+            console.log('[Validation] ⚠️  Invalid preferred_contact_channel:', lead.preferred_contact_channel, '- discarding');
+            lead.preferred_contact_channel = undefined;
+          } else {
+            // Normalize to lowercase
+            lead.preferred_contact_channel = normalized;
+          }
+
+          // Exception: Allow if pendingLeadField was 'contact_choice' (user was prompted)
+          // Otherwise, require explicit mention in user message
+          if (lead.preferred_contact_channel && pendingLeadField !== 'contact_choice' && !hasContactChannelMention(sanitizedMessage)) {
+            console.log('[Validation] ⚠️  Rejecting hallucinated preferred_contact_channel - no channel mention in message');
+            lead.preferred_contact_channel = undefined;
+          }
         }
       }
 
