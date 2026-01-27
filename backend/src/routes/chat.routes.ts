@@ -7,6 +7,14 @@ import { IntentService, ConversationTopic, PendingDisambiguation, PendingLeadFie
 import { PricingResponderService } from '../services/pricing-responder.service';
 import { ChatRequest, ChatResponse, Lead, Message } from '../types';
 import { getAllValidPrices, PRICING_DATA } from '../data/pricing';
+import {
+  looksLikeQuestion,
+  hasPricingOrInfoIntent,
+  isAttemptedEmail,
+  isPlausibleName,
+  isPurchaseCommitment,
+  isValidEmail as isValidEmailHelper
+} from '../utils/leadflow';
 
 const router = Router();
 const dbService = new DatabaseService();
@@ -477,14 +485,25 @@ router.post(
         console.log('[LeadFlow] ✨ PENDING LEAD FIELD ACTIVE:', pendingLeadField);
 
         if (pendingLeadField === 'name') {
-          // Accept any short text as name unless it's clearly a question
-          // Only treat as question if: ends with ? OR (starts with question word AND has >2 words)
-          const endsWithQuestion = sanitizedMessage.trim().endsWith('?');
-          const startsWithQuestionWord = /^(what|how|when|where|why|who|can|could|do|does|is|are|tell|show|explain)\b/i.test(sanitizedMessage);
-          const wordCount = sanitizedMessage.trim().split(/\s+/).length;
-          const looksLikeQuestion = endsWithQuestion || (startsWithQuestionWord && wordCount > 2);
+          // INTERRUPTIBLE: Check if user is asking a question instead of providing name
+          if (looksLikeQuestion(sanitizedMessage) || hasPricingOrInfoIntent(sanitizedMessage)) {
+            console.log('[LeadFlow] ⚠️  User asked question during name collection - interrupting to answer');
+            // Fall through to normal routing to answer the question
+            // DO NOT consume as name, DO NOT mark as resolved
+          } else if (isValidEmailHelper(sanitizedMessage.trim())) {
+            // User provided email instead of name - accept it
+            const email = sanitizedMessage.trim();
+            console.log('[LeadFlow] ✅ User provided email instead of name:', email);
 
-          if (!looksLikeQuestion) {
+            lead = enhanceLeadFromTopic(null, {}, existingLead);
+            lead.email = email;
+
+            // Still need name
+            reply = "Great! And what's your name?";
+            metadata.pendingLeadField = 'name';
+            pendingResolved = true;
+          } else if (isPlausibleName(sanitizedMessage)) {
+            // Valid name
             const name = sanitizeName(sanitizedMessage);
             console.log('[LeadFlow] ✅ pending=name resolved, saved name:', name);
 
@@ -496,65 +515,81 @@ router.post(
             metadata.pendingLeadField = 'email';
             pendingResolved = true;
           } else {
-            console.log('[LeadFlow] ⚠️  Looks like a question, not a name - clearing pending state');
-            // Fall through to normal routing
+            // Unclear input - ask again
+            console.log('[LeadFlow] ⚠️  Unclear input for name - asking again');
+            reply = "What should I call you?";
+            metadata.pendingLeadField = 'name';
+            lead = enhanceLeadFromTopic(null, {}, existingLead);
+            pendingResolved = true;
           }
 
         } else if (pendingLeadField === 'email') {
-          // Validate email
-          const email = sanitizedMessage.trim();
-
-          if (isValidEmail(email)) {
-            console.log('[LeadFlow] ✅ pending=email resolved, saved email:', email);
-
-            lead = enhanceLeadFromTopic(null, {}, existingLead);
-            lead.email = email;
-
-            // Show contact options
-            reply = "Great! How would you like to move forward?\n\n{{BTN_MEETING}}\n{{BTN_WHATSAPP}}\n{{BTN_TELEGRAM}}\n{{BTN_CONTACT_FORM}}\n{{BTN_CALL_US}}";
-            metadata.pendingLeadField = 'contact_choice';
-            metadata.ctaShown = true;
-            metadata.ctaShownAt = new Date().toISOString();
-            pendingResolved = true;
-
+          // INTERRUPTIBLE: Check if user is asking a question instead of providing email
+          if (looksLikeQuestion(sanitizedMessage) || hasPricingOrInfoIntent(sanitizedMessage) || !isAttemptedEmail(sanitizedMessage)) {
+            console.log('[LeadFlow] ⚠️  User asked question during email collection - interrupting to answer');
+            // Fall through to normal routing to answer the question
+            // DO NOT say "invalid email", DO NOT mark as resolved
           } else {
-            console.log('[LeadFlow] ❌ Invalid email format:', email);
+            // User attempted to provide email
+            const email = sanitizedMessage.trim();
 
-            // Ask again
-            reply = "That doesn't look like a valid email. Please enter your email address (e.g., name@company.com).";
-            metadata.pendingLeadField = 'email'; // Keep pending
-            lead = enhanceLeadFromTopic(null, {}, existingLead);
-            pendingResolved = true;
+            if (isValidEmailHelper(email)) {
+              console.log('[LeadFlow] ✅ pending=email resolved, saved email:', email);
+
+              lead = enhanceLeadFromTopic(null, {}, existingLead);
+              lead.email = email;
+
+              // Show contact options
+              reply = "Great! How would you like to move forward?\n\n{{BTN_MEETING}}\n{{BTN_WHATSAPP}}\n{{BTN_TELEGRAM}}\n{{BTN_CONTACT_FORM}}\n{{BTN_CALL_US}}";
+              metadata.pendingLeadField = 'contact_choice';
+              metadata.ctaShown = true;
+              metadata.ctaShownAt = new Date().toISOString();
+              pendingResolved = true;
+            } else {
+              console.log('[LeadFlow] ❌ Invalid email format:', email);
+
+              // Ask again
+              reply = "That doesn't look like a valid email. Please enter your email address (e.g., name@company.com).";
+              metadata.pendingLeadField = 'email'; // Keep pending
+              lead = enhanceLeadFromTopic(null, {}, existingLead);
+              pendingResolved = true;
+            }
           }
 
         } else if (pendingLeadField === 'budget') {
-          // Normalize budget to categories
-          const budgetInput = sanitizedMessage.trim();
-          const normalizedBudget = normalizeBudgetRange(budgetInput);
-
-          console.log('[LeadFlow] ✅ pending=budget resolved, normalized to:', normalizedBudget);
-
-          lead = enhanceLeadFromTopic(null, {}, existingLead);
-          lead.budget_range = normalizedBudget;
-
-          // Add raw budget to notes
-          if (budgetInput !== normalizedBudget) {
-            const budgetNote = `Budget mentioned: ${budgetInput}`;
-            lead.notes = lead.notes ? `${lead.notes}; ${budgetNote}` : budgetNote;
-          }
-
-          // Continue to next field (usually name or email)
-          if (!existingLead?.name) {
-            reply = "Thanks! What's your name?";
-            metadata.pendingLeadField = 'name';
-          } else if (!existingLead?.email) {
-            reply = "Thanks! What's your email address?";
-            metadata.pendingLeadField = 'email';
+          // INTERRUPTIBLE: Check if user is asking a question instead of providing budget
+          if (looksLikeQuestion(sanitizedMessage) || hasPricingOrInfoIntent(sanitizedMessage)) {
+            console.log('[LeadFlow] ⚠️  User asked question during budget collection - interrupting to answer');
+            // Fall through to normal routing to answer the question
           } else {
-            reply = "Great! How would you like to move forward?\n\n{{BTN_MEETING}}\n{{BTN_WHATSAPP}}\n{{BTN_TELEGRAM}}\n{{BTN_CONTACT_FORM}}\n{{BTN_CALL_US}}";
-            metadata.pendingLeadField = 'contact_choice';
+            // Normalize budget to categories
+            const budgetInput = sanitizedMessage.trim();
+            const normalizedBudget = normalizeBudgetRange(budgetInput);
+
+            console.log('[LeadFlow] ✅ pending=budget resolved, normalized to:', normalizedBudget);
+
+            lead = enhanceLeadFromTopic(null, {}, existingLead);
+            lead.budget_range = normalizedBudget;
+
+            // Add raw budget to notes
+            if (budgetInput !== normalizedBudget) {
+              const budgetNote = `Budget mentioned: ${budgetInput}`;
+              lead.notes = lead.notes ? `${lead.notes}; ${budgetNote}` : budgetNote;
+            }
+
+            // Continue to next field (usually name or email)
+            if (!existingLead?.name) {
+              reply = "Thanks! What's your name?";
+              metadata.pendingLeadField = 'name';
+            } else if (!existingLead?.email) {
+              reply = "Thanks! What's your email address?";
+              metadata.pendingLeadField = 'email';
+            } else {
+              reply = "Great! How would you like to move forward?\n\n{{BTN_MEETING}}\n{{BTN_WHATSAPP}}\n{{BTN_TELEGRAM}}\n{{BTN_CONTACT_FORM}}\n{{BTN_CALL_US}}";
+              metadata.pendingLeadField = 'contact_choice';
+            }
+            pendingResolved = true;
           }
-          pendingResolved = true;
 
         } else if (pendingLeadField === 'contact_choice') {
           // Handle contact method selection (NON-BLOCKING)
@@ -865,12 +900,20 @@ router.post(
         }
 
         // Handle buy intent from LLM response - set up lead flow
-        if (reply.includes("What's your name?") || reply.includes("what's your name")) {
-          metadata.pendingLeadField = 'name';
-          console.log('[Chat] LLM triggered name collection');
-        } else if (reply.includes("email address") || reply.includes("your email")) {
-          metadata.pendingLeadField = 'email';
-          console.log('[Chat] LLM triggered email collection');
+        // GATED: Only trigger lead capture if user showed purchase commitment
+        const userShowedCommitment = isPurchaseCommitment(sanitizedMessage) ||
+                                      (existingLead && (existingLead.name || existingLead.email));
+
+        if (userShowedCommitment) {
+          if (reply.includes("What's your name?") || reply.includes("what's your name")) {
+            metadata.pendingLeadField = 'name';
+            console.log('[Chat] LLM triggered name collection (purchase commitment detected)');
+          } else if (reply.includes("email address") || reply.includes("your email")) {
+            metadata.pendingLeadField = 'email';
+            console.log('[Chat] LLM triggered email collection (purchase commitment detected)');
+          }
+        } else {
+          console.log('[Chat] LLM tried to trigger lead capture but no purchase commitment - ignoring');
         }
 
         // Handle contact buttons in response

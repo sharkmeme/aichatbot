@@ -8,7 +8,9 @@
     "build": "tsc && npm run copy-knowledge",
     "copy-knowledge": "node scripts/copy-knowledge.js",
     "start": "node dist/index.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test src/**/*.test.ts",
+    "test:leadflow": "tsx --test src/utils/leadflow.test.ts"
   },
   "keywords": ["chatbot", "ai", "openai"],
   "author": "Bunny Honey",
