@@ -730,6 +730,32 @@ router.post(
         }
       }
 
+      // PRIORITY 2.6: Handle direct contact method selection (call/telegram/whatsapp/meeting)
+      // This MUST come before topic extraction to prevent "call" from being matched to "phone-support" package
+      if (!pendingResolved) {
+        const selectedContact = detectContactMethodSelection(sanitizedMessage);
+
+        if (selectedContact && existingLead && existingLead.name && existingLead.email) {
+          console.log('[Chat] 🎯 Contact method selected by qualified lead:', selectedContact);
+
+          const buttonMap: Record<string, string> = {
+            'telegram': '{{BTN_TELEGRAM}}',
+            'whatsapp': '{{BTN_WHATSAPP}}',
+            'meeting': '{{BTN_MEETING}}',
+            'contact_form': '{{BTN_CONTACT_FORM}}',
+            'call': '{{BTN_CALL_US}}'
+          };
+
+          const contactName = selectedContact.charAt(0).toUpperCase() + selectedContact.slice(1).replace('_', ' ');
+          reply = `Tap the ${contactName} button below.\n\n${buttonMap[selectedContact]}`;
+
+          lead = enhanceLeadFromTopic(null, {}, existingLead);
+          lead.preferred_contact_channel = selectedContact;
+          pendingResolved = true;
+          metadata.intent = 'contact_selection';
+        }
+      }
+
       // PRIORITY 3+: Normal intent/topic routing with LLM (only if pending wasn't resolved)
       if (!pendingResolved) {
         // Detect multi-package requests FIRST
@@ -928,6 +954,31 @@ router.post(
         // Buttons only appear when:
         // (a) User just provided email (handled in email flow above)
         // (b) User explicitly asks "how to proceed" (LLM will handle via prompt)
+
+        // RESUME LEAD CAPTURE AFTER INTERRUPTION
+        // If we answered a question (didn't set pending field yet) but have incomplete lead, resume
+        if (!metadata.pendingLeadField && !pendingResolved && existingLead) {
+          const hasName = !!existingLead.name;
+          const hasEmail = !!existingLead.email;
+          const hasContact = !!existingLead.preferred_contact_channel;
+
+          // Resume based on what's missing
+          if (hasName && !hasEmail) {
+            console.log('[LeadFlow] 📝 Resuming after interruption - asking for email');
+            reply += "\n\nWhat's your email address?";
+            metadata.pendingLeadField = 'email';
+          } else if (hasEmail && !hasName) {
+            console.log('[LeadFlow] 📝 Resuming after interruption - asking for name');
+            reply += "\n\nWhat's your name?";
+            metadata.pendingLeadField = 'name';
+          } else if (hasName && hasEmail && !hasContact) {
+            console.log('[LeadFlow] 📝 Resuming after interruption - asking for contact choice');
+            reply += "\n\nHow would you like to move forward?\n\n{{BTN_MEETING}}\n{{BTN_WHATSAPP}}\n{{BTN_TELEGRAM}}\n{{BTN_CONTACT_FORM}}\n{{BTN_CALL_US}}";
+            metadata.pendingLeadField = 'contact_choice';
+            metadata.ctaShown = true;
+            metadata.ctaShownAt = new Date().toISOString();
+          }
+        }
 
         // Enhance lead with server-side topic tracking
         // Only mark as interested if intent is pricing/inclusions/buy
