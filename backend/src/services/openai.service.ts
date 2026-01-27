@@ -110,6 +110,51 @@ export class OpenAIService {
             required: []
           }
         }
+      },
+      {
+        type: 'function' as const,
+        function: {
+          name: 'set_state',
+          description: 'Set conversation state (intent, topic, pending question). Use this INSTEAD of writing STATE_JSON in your text response. This keeps state updates clean and separate from user-facing messages.',
+          parameters: {
+            type: 'object',
+            properties: {
+              intent: {
+                type: 'string',
+                description: 'Current conversation intent (pricing, inclusions, buy, general_question, etc.)'
+              },
+              topic: {
+                type: 'object',
+                description: 'Current conversation topic',
+                properties: {
+                  division: {
+                    type: 'string',
+                    description: 'Division ID if known'
+                  },
+                  package: {
+                    type: 'string',
+                    description: 'Package ID if known'
+                  }
+                }
+              },
+              pending_question: {
+                type: 'object',
+                description: 'Pending question awaiting user response',
+                properties: {
+                  topic: {
+                    type: 'object',
+                    description: 'Topic for the pending question'
+                  },
+                  question_type: {
+                    type: 'string',
+                    description: 'Type of question (pricing_or_inclusions, etc.)'
+                  }
+                }
+              }
+            },
+            required: []
+          }
+        }
       }
     ];
   }
@@ -224,6 +269,7 @@ Example STATE_JSON:
       const MAX_ROUNDS = 3;
       const allAllowedPrices: number[] = [];
       let listedDivisionPackages: { division: string; packages: string[] } | null = null;
+      let capturedState: any = undefined; // Capture state from set_state tool
 
       while (roundCount < MAX_ROUNDS) {
         roundCount++;
@@ -255,21 +301,30 @@ Example STATE_JSON:
             const toolName = toolCall.function.name;
             const toolArgs = JSON.parse(toolCall.function.arguments);
 
-            // Execute tool
-            const toolResult = this.toolsService.executeTool(toolName, toolArgs);
+            let toolResult: any;
 
-            // Track when list_division_packages is called - indicates multiple packages listed
-            if (toolName === 'list_division_packages' && toolArgs.division && toolResult?.packages) {
-              listedDivisionPackages = {
-                division: toolArgs.division,
-                packages: toolResult.packages.map((p: any) => p.id)
-              };
-              console.log('[LLM] 📋 Tracked division package listing:', listedDivisionPackages);
-            }
+            // Special handling for set_state tool
+            if (toolName === 'set_state') {
+              console.log('[LLM] 🔄 set_state tool called:', JSON.stringify(toolArgs));
+              capturedState = toolArgs;
+              toolResult = { success: true, message: 'State captured successfully' };
+            } else {
+              // Execute regular tools via toolsService
+              toolResult = this.toolsService.executeTool(toolName, toolArgs);
 
-            // Collect allowed prices from tool results
-            if (toolResult && toolResult.allowed_prices) {
-              allAllowedPrices.push(...toolResult.allowed_prices);
+              // Track when list_division_packages is called - indicates multiple packages listed
+              if (toolName === 'list_division_packages' && toolArgs.division && toolResult?.packages) {
+                listedDivisionPackages = {
+                  division: toolArgs.division,
+                  packages: toolResult.packages.map((p: any) => p.id)
+                };
+                console.log('[LLM] 📋 Tracked division package listing:', listedDivisionPackages);
+              }
+
+              // Collect allowed prices from tool results
+              if (toolResult && toolResult.allowed_prices) {
+                allAllowedPrices.push(...toolResult.allowed_prices);
+              }
             }
 
             // Add tool result to messages
@@ -288,13 +343,19 @@ Example STATE_JSON:
         const responseContent = message.content || '';
         console.log('[LLM] Got final response (no more tool calls)');
 
-        // Parse LEAD_JSON and STATE_JSON
+        // Parse LEAD_JSON and STATE_JSON from text (fallback)
         const { reply, lead, stateUpdate } = this.parseResponseWithState(responseContent);
+
+        // Prefer capturedState from set_state tool over parsed STATE_JSON
+        const finalStateUpdate = capturedState || stateUpdate;
+        if (capturedState) {
+          console.log('[LLM] Using state from set_state tool');
+        }
 
         return {
           reply,
           lead,
-          stateUpdate,
+          stateUpdate: finalStateUpdate,
           toolContext: {
             allowed_prices: allAllowedPrices,
             listed_division_packages: listedDivisionPackages
@@ -308,10 +369,13 @@ Example STATE_JSON:
       const content = typeof lastMessage === 'object' && 'content' in lastMessage ? lastMessage.content : '';
       const { reply, lead, stateUpdate } = this.parseResponseWithState(String(content));
 
+      // Prefer capturedState from set_state tool over parsed STATE_JSON
+      const finalStateUpdate = capturedState || stateUpdate;
+
       return {
         reply,
         lead,
-        stateUpdate,
+        stateUpdate: finalStateUpdate,
         toolContext: {
           allowed_prices: allAllowedPrices,
           listed_division_packages: listedDivisionPackages
@@ -322,6 +386,83 @@ Example STATE_JSON:
       console.error('[LLM] Error in tool-calling completion:', error);
       throw new Error(`Failed to generate chat completion with tools: ${error.message}`);
     }
+  }
+
+  /**
+   * Extract JSON object from text using brace counting with proper string/escape handling
+   * Returns the JSON string, start index (including marker), and end index
+   */
+  private extractJsonObject(text: string, marker: string): {
+    jsonStr: string;
+    startIndex: number;
+    endIndex: number;
+  } | null {
+    const markerIndex = text.indexOf(marker);
+    if (markerIndex === -1) {
+      return null;
+    }
+
+    // Find first '{' after marker
+    let braceStart = -1;
+    for (let i = markerIndex + marker.length; i < text.length; i++) {
+      if (text[i] === '{') {
+        braceStart = i;
+        break;
+      }
+    }
+
+    if (braceStart === -1) {
+      return null;
+    }
+
+    // Scan forward with brace counting and string handling
+    let depth = 0;
+    let inString = false;
+    let escapeNext = false;
+
+    for (let i = braceStart; i < text.length; i++) {
+      const char = text[i];
+
+      if (escapeNext) {
+        escapeNext = false;
+        continue;
+      }
+
+      if (char === '\\') {
+        escapeNext = true;
+        continue;
+      }
+
+      if (char === '"') {
+        inString = !inString;
+        continue;
+      }
+
+      // Only count braces when not inside a string
+      if (!inString) {
+        if (char === '{') {
+          depth++;
+        } else if (char === '}') {
+          depth--;
+          if (depth === 0) {
+            // Found matching closing brace
+            const jsonStr = text.substring(braceStart, i + 1);
+            return {
+              jsonStr,
+              startIndex: markerIndex,
+              endIndex: i + 1
+            };
+          }
+        }
+      }
+    }
+
+    // Unclosed JSON - return what we have for removal
+    return {
+      jsonStr: text.substring(braceStart),
+      startIndex: markerIndex,
+      endIndex: text.length
+    };
   }
 
   /**
@@ -336,29 +477,39 @@ Example STATE_JSON:
     let lead: Lead | null = null;
     let stateUpdate: any = undefined;
 
-    // Extract LEAD_JSON
-    const leadJsonMatch = content.match(/LEAD_JSON:\s*(\{[\s\S]*?\})/);
-    if (leadJsonMatch) {
+    // Extract LEAD_JSON using robust extraction
+    const leadExtraction = this.extractJsonObject(content, 'LEAD_JSON:');
+    if (leadExtraction) {
       try {
-        lead = JSON.parse(leadJsonMatch[1]);
+        lead = JSON.parse(leadExtraction.jsonStr);
         console.log('[LLM] Parsed LEAD_JSON with', Object.keys(lead || {}).filter(k => (lead as any)[k]).length, 'fields');
       } catch (error) {
         console.error('[LLM] Failed to parse LEAD_JSON:', error);
+        console.error('[LLM] Invalid JSON was:', leadExtraction.jsonStr.substring(0, 100));
+        lead = null; // Set to null on parse failure
       }
-      reply = reply.replace(/LEAD_JSON:\s*\{[\s\S]*?\}/g, '').trim();
+      // ALWAYS remove the entire block from reply, even on parse failure
+      reply = (content.substring(0, leadExtraction.startIndex) + content.substring(leadExtraction.endIndex)).trim();
+      content = reply; // Update content for next extraction
     }
 
-    // Extract STATE_JSON
-    const stateJsonMatch = content.match(/STATE_JSON:\s*(\{[\s\S]*?\})/);
-    if (stateJsonMatch) {
+    // Extract STATE_JSON using robust extraction
+    const stateExtraction = this.extractJsonObject(content, 'STATE_JSON:');
+    if (stateExtraction) {
       try {
-        stateUpdate = JSON.parse(stateJsonMatch[1]);
+        stateUpdate = JSON.parse(stateExtraction.jsonStr);
         console.log('[LLM] Parsed STATE_JSON:', JSON.stringify(stateUpdate));
       } catch (error) {
         console.error('[LLM] Failed to parse STATE_JSON:', error);
+        console.error('[LLM] Invalid JSON was:', stateExtraction.jsonStr.substring(0, 100));
+        stateUpdate = undefined; // Set to undefined on parse failure
       }
-      reply = reply.replace(/STATE_JSON:\s*\{[\s\S]*?\}/g, '').trim();
+      // ALWAYS remove the entire block from reply, even on parse failure
+      reply = (reply.substring(0, stateExtraction.startIndex) + reply.substring(stateExtraction.endIndex)).trim();
     }
+
+    // Final cleanup - remove any trailing commas or JSON fragments
+    reply = reply.replace(/[,\s]+$/, '').trim();
 
     return { reply, lead, stateUpdate };
   }
