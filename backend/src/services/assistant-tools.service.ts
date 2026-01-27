@@ -66,12 +66,12 @@ interface ContactButtons {
  * Package and division synonyms for fuzzy matching
  */
 const SYNONYMS: Record<string, string[]> = {
-  'lead-intake-crm': ['crm', 'crm system', 'lead intake', 'lead crm', 'customer relationship', 'lead management'],
+  'lead-intake-crm': ['crm', 'crm system', 'lead intake', 'lead crm', 'customer relationship', 'lead management', 'leads', 'lead capture', 'lead gen', 'lead generation', 'intake'],
   'ai-outreach': ['outreach', 'ai outreach', 'follow up', 'followup', 'outreach system', 'follow-up'],
-  'support-ticket': ['ticket', 'support ticket', 'ticketing', 'ticket system', 'support', 'helpdesk'],
+  'support-ticket': ['ticket', 'support ticket', 'ticketing', 'ticket system', 'support', 'helpdesk', 'tickets', 'help desk'],
   'chat-assistant': ['chatbot', 'chat assistant', 'chat bot', 'website chat', 'chat', 'live chat'],
-  'phone-support': ['phone', 'phone support', 'call support', 'voice', 'voice assistant', 'calling'],
-  'content-engine': ['content engine', 'pipeline', 'engine', 'content', 'automation'],
+  'phone-support': ['phone', 'phone support', 'call support', 'voice', 'voice assistant', 'calling', 'call assistant', 'phone assistant'],
+  'content-engine': ['content engine', 'pipeline', 'engine', 'content', 'automation', 'ontent engine'],
   'studio-partner': ['studio partner', 'partner', 'studios partner', 'partnership'],
   'starter': ['starter', 'start', 'basic'],
   'growth': ['growth', 'grow', 'scale'],

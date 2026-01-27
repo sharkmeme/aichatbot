@@ -25,8 +25,27 @@ export function looksLikeQuestion(text: string): boolean {
 export function hasPricingOrInfoIntent(text: string): boolean {
   const normalized = text.toLowerCase().trim();
 
-  const pricingPatterns = /\b(price|pricing|cost|how much|included|what include|what'?s included|difference|compare|detail|info|information|tell me about|explain)\b/i;
+  const pricingPatterns = /\b(price|pricing|cost|how much|included|what include|what'?s included|difference|compare|detail|info|information|tell me about|explain|monthly|one-time|\$)\b/i;
   return pricingPatterns.test(normalized);
+}
+
+/**
+ * Detect Question Mode - user is asking for information, not ready to take action
+ * In Question Mode: Answer the question, do NOT push CTA or lead collection
+ */
+export function isQuestionMode(text: string): boolean {
+  return looksLikeQuestion(text) || hasPricingOrInfoIntent(text);
+}
+
+/**
+ * Detect Action Mode - user is ready to take action (buy, contact, proceed)
+ * In Action Mode: Show CTA buttons, collect lead info, route to contact method
+ */
+export function isActionMode(text: string): boolean {
+  const normalized = text.toLowerCase().trim();
+
+  const actionPatterns = /\b(buy|join|sign up|proceed|move forward|book|meeting|contact|telegram|whatsapp|call|get started|let'?s go|i'?m in|ready)\b/i;
+  return actionPatterns.test(normalized);
 }
 
 /**

@@ -13,7 +13,9 @@ import {
   isAttemptedEmail,
   isPlausibleName,
   isPurchaseCommitment,
-  isValidEmail as isValidEmailHelper
+  isValidEmail as isValidEmailHelper,
+  isQuestionMode,
+  isActionMode
 } from '../utils/leadflow';
 
 const router = Router();
@@ -388,12 +390,18 @@ function enhanceLeadFromTopic(
     notes: lead?.notes || existingLead?.notes
   };
 
-  // Only auto-set interest_area from topic if user shows actual interest
-  if (showsInterest && !enhanced.interest_area && (topic.package || topic.division)) {
-    if (topic.package) {
-      enhanced.interest_area = topic.package;
-    } else if (topic.division) {
-      enhanced.interest_area = topic.division;
+  // Update interest_area from topic if user shows actual interest
+  // Always update to most recent asked-about package/division (don't stay stuck on old interest)
+  if (showsInterest && (topic.package || topic.division)) {
+    const newInterest = topic.package || topic.division;
+    if (newInterest) {
+      // If there's an existing interest that's different, append to notes
+      if (enhanced.interest_area && enhanced.interest_area !== newInterest) {
+        const interestNote = `Previously interested in: ${enhanced.interest_area}`;
+        enhanced.notes = enhanced.notes ? `${enhanced.notes}; ${interestNote}` : interestNote;
+      }
+      // Update to most recent interest
+      enhanced.interest_area = newInterest;
     }
   }
 
@@ -466,11 +474,23 @@ router.post(
       console.log('[Chat] Recent messages count:', recentMessages.length);
 
       // Check for pending lead field (HIGHEST PRIORITY)
-      const pendingLeadField = getPendingLeadField(recentMessages, existingLead);
+      let pendingLeadField = getPendingLeadField(recentMessages, existingLead);
 
       // Check for pending disambiguation state
       const pendingDisambiguation = getPendingDisambiguation(recentMessages);
       const lastIntent = getLastIntent(recentMessages);
+
+      // DETECT MODE: Question Mode vs Action Mode
+      const userMode = isQuestionMode(sanitizedMessage) ? 'QUESTION' :
+                       isActionMode(sanitizedMessage) ? 'ACTION' :
+                       'NEUTRAL';
+      console.log(`[Mode] Detected mode: ${userMode} for message: "${sanitizedMessage.substring(0, 50)}..."`);
+
+      // If QUESTION MODE and pending=contact_choice: clear it for this turn
+      if (userMode === 'QUESTION' && pendingLeadField === 'contact_choice') {
+        console.log('[Mode] QUESTION MODE detected - clearing contact_choice pending for this turn');
+        pendingLeadField = null;
+      }
 
       let reply: string = "I'm having trouble processing that. Could you rephrase your question?";
       let lead: Lead | null = null;
@@ -950,14 +970,14 @@ router.post(
           console.log('[CTA] Contact buttons shown - pendingLeadField set to contact_choice');
         }
 
-        // Never automatically re-append CTA buttons after answering questions
-        // Buttons only appear when:
-        // (a) User just provided email (handled in email flow above)
-        // (b) User explicitly asks "how to proceed" (LLM will handle via prompt)
+        // CTA ONE-SHOT POLICY:
+        // After email collected, show CTA once. If next message is QUESTION MODE, do NOT re-show CTA.
+        // Only re-show if user explicitly asks to move forward (ACTION MODE).
 
-        // RESUME LEAD CAPTURE AFTER INTERRUPTION
+        // RESUME LEAD CAPTURE AFTER INTERRUPTION (but respect mode)
         // If we answered a question (didn't set pending field yet) but have incomplete lead, resume
-        if (!metadata.pendingLeadField && !pendingResolved && existingLead) {
+        // BUT: Only resume if NOT in QUESTION MODE (to prevent CTA spam on informational queries)
+        if (!metadata.pendingLeadField && !pendingResolved && existingLead && userMode !== 'QUESTION') {
           const hasName = !!existingLead.name;
           const hasEmail = !!existingLead.email;
           const hasContact = !!existingLead.preferred_contact_channel;
@@ -971,8 +991,9 @@ router.post(
             console.log('[LeadFlow] 📝 Resuming after interruption - asking for name');
             reply += "\n\nWhat's your name?";
             metadata.pendingLeadField = 'name';
-          } else if (hasName && hasEmail && !hasContact) {
-            console.log('[LeadFlow] 📝 Resuming after interruption - asking for contact choice');
+          } else if (hasName && hasEmail && !hasContact && userMode === 'ACTION') {
+            // Only show CTA if user is in ACTION MODE (explicitly ready to proceed)
+            console.log('[LeadFlow] 📝 Resuming after interruption - asking for contact choice (ACTION MODE)');
             reply += "\n\nHow would you like to move forward?\n\n{{BTN_MEETING}}\n{{BTN_WHATSAPP}}\n{{BTN_TELEGRAM}}\n{{BTN_CONTACT_FORM}}\n{{BTN_CALL_US}}";
             metadata.pendingLeadField = 'contact_choice';
             metadata.ctaShown = true;
