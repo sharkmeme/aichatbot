@@ -79,6 +79,55 @@ function filterRegistrationClaims(reply: string): string {
 }
 
 /**
+ * Detect stage from reply content (server-side enforcement)
+ */
+function detectStageFromReply(reply: string, currentState: ConversationState): ConversationState {
+  // If reply contains all 5 contact button tokens → force choose_contact stage
+  const hasAllButtons =
+    reply.includes('{{BTN_MEETING}}') &&
+    reply.includes('{{BTN_WHATSAPP}}') &&
+    reply.includes('{{BTN_TELEGRAM}}') &&
+    reply.includes('{{BTN_CONTACT_FORM}}') &&
+    reply.includes('{{BTN_CALL_US}}');
+
+  if (hasAllButtons) {
+    console.log('[Stage Detection] ✅ All 5 contact buttons detected → forcing stage=choose_contact');
+    return { stage: 'choose_contact', topic: currentState.topic };
+  }
+
+  // If reply asks for name → force collect_name stage
+  const namePatterns = [
+    /what'?s your name/i,
+    /may I (have|get|ask for) your name/i,
+    /could I get your name/i,
+    /please (share|provide|tell me) your name/i,
+    /I('ll)? need your name/i
+  ];
+
+  if (namePatterns.some(pattern => pattern.test(reply))) {
+    console.log('[Stage Detection] ✅ Name request detected → forcing stage=collect_name');
+    return { stage: 'collect_name', topic: currentState.topic };
+  }
+
+  // If reply asks for email → force collect_email stage
+  const emailPatterns = [
+    /what'?s your email/i,
+    /may I (have|get|ask for) your email/i,
+    /could I get your email/i,
+    /please (share|provide|tell me) your email/i,
+    /I('ll)? need your email/i
+  ];
+
+  if (emailPatterns.some(pattern => pattern.test(reply))) {
+    console.log('[Stage Detection] ✅ Email request detected → forcing stage=collect_email');
+    return { stage: 'collect_email', topic: currentState.topic };
+  }
+
+  // No stage change detected, return current state
+  return currentState;
+}
+
+/**
  * Extract name from message (simple heuristic)
  */
 function extractName(message: string): string | null {
@@ -187,9 +236,11 @@ router.post(
           const lead: Lead = { preferred_contact_channel: contactMethod };
           updatedLead = await dbService.upsertLead(conversation.id, sanitizedSessionId, lead);
 
-          // Stay in choose_contact stage (or could move to a "done" stage)
+          // Stay in choose_contact stage
           newState = currentState;
         }
+        // If user asks a normal question in choose_contact stage, use LLM but keep stage
+        // (don't re-show buttons unless they ask to proceed or type a contact method)
       }
 
       // If not handled by validation, use LLM
@@ -226,8 +277,21 @@ router.post(
               stage: llmResponse.stateUpdate.stage,
               topic: llmResponse.stateUpdate.topic || currentState.topic
             };
-            console.log('[State] LLM updated state:', JSON.stringify(newState));
+            console.log('[State] LLM updated state via set_state tool:', JSON.stringify(newState));
           }
+        }
+
+        // SERVER-SIDE STAGE DETECTION (enforce based on reply content)
+        const detectedState = detectStageFromReply(reply, newState);
+        if (detectedState.stage !== newState.stage) {
+          console.log('[Stage Detection] Server forcing stage transition:', newState.stage, '→', detectedState.stage);
+          newState = detectedState;
+        }
+
+        // If in choose_contact and answering a normal question (no buttons), keep stage
+        if (currentState.stage === 'choose_contact' && newState.stage === 'info') {
+          console.log('[Stage Detection] Keeping choose_contact stage for normal question');
+          newState = { stage: 'choose_contact', topic: currentState.topic };
         }
 
         // Price validation guard
@@ -253,6 +317,7 @@ router.post(
       }
 
       // 7. Save bot message with state
+      console.log('[State] Final state being saved:', JSON.stringify(newState));
       const metadata = { state: newState, lead: updatedLead?.id };
       await dbService.insertMessage(conversation.id, 'bot', reply, metadata);
 
